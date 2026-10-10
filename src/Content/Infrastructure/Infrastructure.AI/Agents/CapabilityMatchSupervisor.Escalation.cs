@@ -314,13 +314,13 @@ public sealed partial class CapabilityMatchSupervisor
         // ArmDelegationGovernance's remarks for why conversation id, call-once scope, and workload
         // identity are inherited from the parent turn rather than re-minted from the delegation id.
         //
-        // The scope is disposed via `await using` covering the REST OF THIS METHOD, not narrowed to
+        // The handle is disposed via `await using` covering the REST OF THIS METHOD, not narrowed to
         // just the RunAsync call below — CI's correctness-review caught an earlier, narrower version
         // of this that leaked the scope if the agent-build step (immediately below) threw, since
         // nothing had taken ownership of disposal yet at that point. Only the ADMISSION-PIPELINE
-        // ambient (ToolAdmissionAccessor.Begin) is narrowly scoped to the RunAsync call itself.
-        var governance = ArmDelegationGovernance(selection.SelectedAgent.AgentId, pendingRecord.DelegationId);
-        await using var governanceScope = governance.Scope;
+        // ambient (Publish) is narrowly scoped to the RunAsync call itself. Disposing it also folds the
+        // delegate's trace into the parent turn's (#771), on every exit.
+        await using var governance = ArmDelegationGovernance(selection.SelectedAgent.AgentId, pendingRecord.DelegationId);
 
         // #518: a named-agent delegation (SubagentType.NamedAgent) has no ISubagentProfileRegistry
         // entry — GetProfile only knows the built-in profiles. Build the runnable agent the same way
@@ -410,7 +410,7 @@ public sealed partial class CapabilityMatchSupervisor
         LlmUsageSnapshot usage;
         try
         {
-            using (ToolAdmissionAccessor.Begin(governance.Pipeline, selection.SelectedAgent.AgentId))
+            using (governance.Publish())
             {
                 response = await agent.RunAsync(
                     [new ChatMessage(ChatRole.User, pendingRecord.TaskDescription)],
@@ -430,19 +430,8 @@ public sealed partial class CapabilityMatchSupervisor
             }
             finally
             {
-                try
-                {
-                    // #771: the delegate's recorder lives and dies with its scope, so its decisions are
-                    // folded into the parent turn's trace before the scope is disposed — otherwise a tool
-                    // the delegate was denied would not appear in the Governance trace the turn reports.
-                    _ambientScope.Current?.GetService<IGovernanceTraceRecorder>()
-                        ?.Absorb(governance.Pipeline.GetTrace());
-                }
-                finally
-                {
-                    if (namedDelegationContext is not null)
-                        await FinalizeNamedDelegationScopeAsync(namedDelegationContext, namedDelegationScope!, ct);
-                }
+                if (namedDelegationContext is not null)
+                    await FinalizeNamedDelegationScopeAsync(namedDelegationContext, namedDelegationScope!, ct);
             }
         }
 
@@ -476,9 +465,8 @@ public sealed partial class CapabilityMatchSupervisor
 
     /// <summary>
     /// Opens a fresh DI scope for one delegation and arms it with the delegated agent's OWN
-    /// governance identity (#757) — kept as its own method so the exception-safety-sensitive
-    /// arm/Initialize/resolve sequence, including disposing the scope on a setup failure (see
-    /// the <c>catch</c> below), lives in exactly one place rather than inline in
+    /// governance identity (#757), returning the <see cref="GovernedChildScope"/> that owns it — the
+    /// exception-safe open/arm/fold/dispose sequence lives in that handle rather than inline in
     /// <see cref="ExecuteAgent"/>.
     /// </summary>
     /// <remarks>
@@ -516,33 +504,21 @@ public sealed partial class CapabilityMatchSupervisor
     /// scope.
     /// </para>
     /// </remarks>
-    private (AsyncServiceScope Scope, IToolCallAdmissionPipeline Pipeline) ArmDelegationGovernance(
-        string delegateAgentId, Guid delegationId)
+    private GovernedChildScope ArmDelegationGovernance(string delegateAgentId, Guid delegationId)
     {
-        var parentContext = _ambientScope.Current?.GetService<IAgentExecutionContext>();
+        var ambient = _ambientScope.Current;
 
-        var scope = _scopeFactory.CreateAsyncScope();
-        try
-        {
-            // GovernanceArmingPolicy.Delegation: the choices described above — the delegation id is the
-            // fallback wherever the parent turn supplies no conversation id or call-once scope.
-            var pipeline = GovernanceArmer.ArmWithAdmission(
-                scope.ServiceProvider,
-                delegateAgentId,
-                GovernanceArmingPolicy.Delegation,
-                parentContext,
-                delegationId.ToString());
-            return (scope, pipeline);
-        }
-        catch
-        {
-            // Nothing has handed the scope back to a caller yet, so nobody else will dispose it —
-            // a throw here (e.g. a misconfigured IToolCallAdmissionPipeline registration) would
-            // otherwise leak the scope, and with it the delegate's external governance attribution
-            // Initialize() just published (see AgentExecutionContext.Initialize's BeginTurn).
-            scope.Dispose();
-            throw;
-        }
+        // GovernanceArmingPolicy.Delegation: the choices described above — the delegation id is the
+        // fallback wherever the parent turn supplies no conversation id or call-once scope. The parent's
+        // trace recorder is what the handle folds the delegate's decisions into when it is disposed (#771);
+        // a failed arming disposes the scope inside OpenChild.
+        return GovernanceArmer.OpenChild(
+            _scopeFactory,
+            delegateAgentId,
+            GovernanceArmingPolicy.Delegation,
+            ambient?.GetService<IAgentExecutionContext>(),
+            delegationId.ToString(),
+            ambient?.GetService<IGovernanceTraceRecorder>());
     }
 
     /// <summary>
