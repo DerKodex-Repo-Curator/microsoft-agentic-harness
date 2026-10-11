@@ -155,13 +155,13 @@ public sealed class ParticipantGovernanceTurn : IAsyncDisposable
         }
     }
 
-    /// <summary>Releases a step's admission pipeline, then its attribution — the reverse of how they were taken.</summary>
+    /// <summary>Releases a step's attribution, then its admission pipeline — the reverse of how they were taken.</summary>
     private sealed class StepScope(IDisposable admission, IDisposable attribution) : IDisposable
     {
         public void Dispose()
         {
-            admission.Dispose();
             attribution.Dispose();
+            admission.Dispose();
         }
     }
 
@@ -193,8 +193,19 @@ public sealed class ParticipantGovernanceTurn : IAsyncDisposable
                 child = _child ??= Arm();
             }
 
-            var attribution = child.Context.ReassertAttribution();
-            return new StepScope(child.Publish(), attribution);
+            // Publish first: it refuses once the turn has ended and the handle is gone, and nothing has been
+            // taken yet that a refusal would leave behind. Attribution second, with the pipeline given back
+            // if it cannot be had.
+            var admission = child.Publish();
+            try
+            {
+                return new StepScope(admission, child.Context.ReassertAttribution());
+            }
+            catch
+            {
+                admission.Dispose();
+                throw;
+            }
         }
 
         public async ValueTask EndAsync()
