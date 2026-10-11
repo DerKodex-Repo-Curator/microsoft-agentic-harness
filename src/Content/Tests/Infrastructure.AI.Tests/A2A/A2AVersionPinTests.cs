@@ -12,11 +12,11 @@ namespace Infrastructure.AI.Tests.A2A;
 /// <list type="number">
 /// <item><description>Pin the harness <see cref="A2AEnvelope"/> schema version
 /// so any breaking shape change forces an explicit bump.</description></item>
-/// <item><description>Assert the <c>Microsoft.Agents.AI</c> (MAF) assemblies the harness loads still
-/// lack a public A2A surface (the separate preview <c>Microsoft.Agents.AI.A2A</c> package is not one
-/// of them). The moment MAF ships one, this test fails and
-/// the harness should switch to wrapping it instead of carrying its own
-/// transport implementation.</description></item>
+/// <item><description>Assert the core <c>Microsoft.Agents.AI</c> (MAF) assemblies the harness loads still
+/// lack a public A2A surface. This covers the core assemblies only: Microsoft's A2A and AG-UI hosting are
+/// separate preview packages, which <c>MafHostingPackagesCanaryTests</c> reads and pins (its evaluation is
+/// recorded in <c>documentation/architecture/a2a-message-contract.md</c>). If the core assemblies ever gain
+/// one, this test fails and the evaluation should be repeated.</description></item>
 /// </list>
 public sealed class A2AVersionPinTests
 {
@@ -60,7 +60,10 @@ public sealed class A2AVersionPinTests
             .ToList();
 
         probes.Should().BeEmpty(
-            "The loaded Microsoft Agent Framework assemblies do not expose A2A primitives; if this test fails MAF has added them and the harness should wrap them — see documentation/architecture/a2a-message-contract.md 'Version pin' section");
+            "The loaded CORE Microsoft Agent Framework assemblies (Microsoft.Agents.AI*) do not expose A2A primitives; "
+            + "if this fails the core assemblies have gained some, so repeat the evaluation in "
+            + "documentation/architecture/a2a-message-contract.md. Microsoft's separate preview hosting packages "
+            + "are covered by MafHostingPackagesCanaryTests, not here.");
     }
 
     [Fact]
@@ -71,6 +74,7 @@ public sealed class A2AVersionPinTests
         version.Should().NotBeNull();
         version!.Major.Should().Be(1, "harness pins to MAF 1.x");
         version.Minor.Should().Be(24,
-            "bumping the minor version requires re-running the A2A canary above");
+            "bumping the minor version requires re-running the A2A canary above and MafHostingPackagesCanaryTests; "
+            + "move the Microsoft.Agents.AI.Hosting.* preview pins in Directory.Packages.props with it");
     }
 }

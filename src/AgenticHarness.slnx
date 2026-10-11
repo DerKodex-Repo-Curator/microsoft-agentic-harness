@@ -260,6 +260,11 @@
       <BuildType Solution="Debug-AgentHub-Dashboard|*" Project="Debug" />
       <BuildType Solution="Debug-AgentHub-WebUI|*" Project="Debug" />
     </Project>
+    <Project Path="Content/Tests/Infrastructure.AI.MafHostingCanary.Tests/Infrastructure.AI.MafHostingCanary.Tests.csproj">
+      <BuildType Solution="Debug-AgentHub-All|*" Project="Debug" />
+      <BuildType Solution="Debug-AgentHub-Dashboard|*" Project="Debug" />
+      <BuildType Solution="Debug-AgentHub-WebUI|*" Project="Debug" />
+    </Project>
     <Project Path="Content/Tests/Infrastructure.APIAccess.Tests/Infrastructure.APIAccess.Tests.csproj">
       <BuildType Solution="Debug-AgentHub-All|*" Project="Debug" />
       <BuildType Solution="Debug-AgentHub-Dashboard|*" Project="Debug" />
