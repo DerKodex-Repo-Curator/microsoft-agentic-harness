@@ -18,10 +18,12 @@ propagation, OTel span linking, mutual-TLS-plus-JWT auth — and pins the MAF
 version via a canary test (`A2AVersionPinTests`) that fails if a loaded MAF
 assembly gains an A2A surface.
 
-Note the canary's limit: Microsoft also publishes A2A and AG-UI hosting as
-separate preview packages (for example `Microsoft.Agents.AI.Hosting.A2A`).
-The harness does not load them, so the canary cannot see them. Whether to
-wrap them instead is an open evaluation, not something this test answers.
+Microsoft also publishes A2A and AG-UI hosting as separate preview packages
+(`Microsoft.Agents.AI.Hosting.A2A`, `Microsoft.Agents.AI.Hosting.AGUI.AspNetCore`).
+The harness does not load them in production. The decision on them is recorded
+under "Evaluation: Microsoft's preview A2A hosting" at the end of this page,
+and the AG-UI one in `ag-ui-hosting-evaluation.md`; a second canary
+(`MafHostingPackagesCanaryTests`) keeps both decisions honest.
 
 ## Envelope
 
@@ -224,19 +226,96 @@ Missing handlers surface as `a2a.skill_not_found`.
 
 `Infrastructure.AI.Tests/A2A/A2AVersionPinTests` asserts:
 
-- The loaded `Microsoft.Agents.AI` assemblies (1.24.0) do **not** expose a
-  public A2A surface (canary: when one gains it, this test fails and the
-  harness should switch to wrapping it; separate preview hosting packages
-  are not covered).
+- The loaded core `Microsoft.Agents.AI` assemblies (1.24.0) do **not** expose a
+  public A2A surface. This covers the core assemblies only; Microsoft's A2A
+  and AG-UI hosting live in separate preview packages, covered next.
 - `A2AEnvelope.CurrentSchemaVersion == 1` — bumping requires updating
   the test and writing a migration note.
 
-When MAF ships A2A primitives:
+`Infrastructure.AI.MafHostingCanary.Tests/MafHostingPackagesCanaryTests`
+covers Microsoft's separate A2A and AG-UI packages. That small project
+references the four packages (nothing else does; a conditional
+`PackageVersion` in `Directory.Packages.props` makes a production reference
+fail restore, and a test reads the project files for the same IDs), pinned
+beside `Microsoft.Agents.AI`. For each it asserts that the package is still
+a preview and that its public types are exactly the ones the evaluation
+below read. A Microsoft.Agents.AI bump therefore cannot pass unnoticed: it
+either changes the surface (the test fails and the evaluation is repeated)
+or it does not (the decision stands). It reads what the *pinned* version
+contains, so a stable release upstream is noticed when the pin next moves,
+not before, and a Microsoft package it does not reference is not seen at all.
 
-1. Failing test makes the situation visible.
-2. Replace `HarnessA2AClient` / `HarnessA2AServer` with thin wrappers
-   over the MAF types, keeping the harness `IA2AClient` / `IA2AServer`
-   call-site shape unchanged.
-3. Keep the envelope conventions — they encode harness-specific
-   identity + correlation semantics that MAF's transport will not
+When the evaluation's answer changes:
+
+1. The failing test makes the situation visible.
+2. Repeat the comparison in the evaluation below, record the outcome here.
+3. If wrapping wins, replace `HarnessA2AClient` / `HarnessA2AServer` with thin
+   wrappers over the Microsoft types, keeping the harness `IA2AClient` /
+   `IA2AServer` call-site shape unchanged.
+4. Keep the envelope conventions — they encode harness-specific
+   identity + correlation semantics that Microsoft's transport will not
    replicate.
+
+## Evaluation: Microsoft's preview A2A hosting
+
+Evaluated 2026-10-11 against four Microsoft packages, all
+1.24.0-preview.261006.1, all built on the community `A2A` SDK
+1.0.0-preview2 (the `a2aproject` .NET SDK, not a Microsoft package):
+
+| Package | Role | Public surface (types) |
+|---|---|---|
+| `Microsoft.Agents.AI.A2A` | **Client**: a remote A2A endpoint as an `AIAgent` | `A2AAgent`, `A2AAgentOptions`, `A2AAgentSession`, `AsAIAgent` / `GetAIAgentAsync` extensions |
+| `Microsoft.Agents.AI.Hosting.A2A` | **Server registration**: publish a registered agent over A2A | `AddA2AServer`, `A2AServerRegistrationOptions`, `A2ARunDecisionContext`, `AgentRunMode`, `IsolationKeyScopedTaskStore` |
+| `Microsoft.Agents.AI.Hosting.A2A.AspNetCore` | **Endpoint mapping** | `MapA2AHttpJson`, `MapA2AJsonRpc` |
+
+(The first version of this evaluation read only the second package and
+concluded there was no client; the security review caught the miss. The four
+are now all pinned by the canary, and the canary's test project is the only
+place they are referenced.)
+
+**Decision: keep the harness-native transport for inter-skill dispatch. Do
+not replace it with these packages.**
+
+The reason is purpose, not missing features. Microsoft's packages model *a
+remote agent behind the public A2A protocol*: an agent card, protocol
+messages and tasks, a client that calls it, an endpoint that serves it. The
+harness contract models *dispatch between skills of this system*: a
+keyed-DI handler registry (`{agentId}:{skill}`), a schema-versioned envelope
+carrying correlation and caller identity, one call shape whether the callee
+is in the same process or another, and an in-process transport with no
+network at all. Replacing it means mapping the envelope onto protocol
+messages at both ends and giving up the in-process path or re-creating it
+beside the package; the call-site shape (`IA2AClient` / `IA2AServer`) could be
+kept, which is why this is a decision about the implementation, not the
+contract.
+
+What Microsoft's packages do **not** decide for us, because they are host
+concerns the package leaves to the host, not things it forbids: mutual TLS
+plus JWT between processes, propagating the calling agent's identity, and
+linking OpenTelemetry spans across the hop. All three can be done around an
+`HttpClient` and an ASP.NET Core pipeline, but they would be re-implemented
+around the package rather than provided by it, so the harness's existing
+implementations (`A2AIdentityPropagator`, `A2ASpanEmitter`, the
+authentication providers) stay either way.
+
+One thing in the package is genuinely relevant and not compared: per-caller
+isolation. `IsolationKeyScopedTaskStore` (verified in the surface above)
+scopes stored tasks by an isolation key. How that compares with the
+harness's caller-refusal rule for conversations (`IConversationStore`
+refuses a record owned by anyone else) was **not** examined.
+
+What the packages would add that the harness transport deliberately does
+not: **interoperability with agents outside this system**. If the harness
+ever needs to call, or be called by, an outside A2A-speaking agent, the
+natural route is `Microsoft.Agents.AI.A2A` for outbound (a remote agent
+appears as an `AIAgent`, usable as a delegate or a Magentic participant) and
+`AddA2AServer` plus `MapA2AJsonRpc` for inbound, added beside this contract,
+not in place of it. That is a feature decision for when the need exists.
+
+Not verified: a wire-level comparison (the harness envelope was not diffed
+against the protocol's message shape), the meaning of `AgentRunMode` and
+`A2ARunDecisionContext` beyond their names, and behaviour under load. The
+decision rests on public-surface, dependency and purpose evidence, not on
+running the packages. Package discovery used the NuGet search index and the
+packages' own metadata, not a complete listing of everything Microsoft
+publishes.

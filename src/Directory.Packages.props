@@ -206,4 +206,16 @@
 
   </ItemGroup>
 
+  <!-- Canary only (Infrastructure.AI.MafHostingCanary.Tests, MafHostingPackagesCanaryTests): no production
+       project references these Microsoft preview A2A and AG-UI packages. They are here so a
+       Microsoft.Agents.AI bump has to re-read their real public surface. Move them with
+       Microsoft.Agents.AI; preview version numbers are not in lockstep. The condition is the guard: a
+       project other than that one that references one has no version for it and fails restore with NU1010. -->
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'Infrastructure.AI.MafHostingCanary.Tests'">
+    <PackageVersion Include="Microsoft.Agents.AI.A2A" Version="1.24.0-preview.261006.1" />
+    <PackageVersion Include="Microsoft.Agents.AI.Hosting.A2A" Version="1.24.0-preview.261006.1" />
+    <PackageVersion Include="Microsoft.Agents.AI.Hosting.A2A.AspNetCore" Version="1.24.0-preview.261006.1" />
+    <PackageVersion Include="Microsoft.Agents.AI.Hosting.AGUI.AspNetCore" Version="1.24.0-preview.261006.1" />
+  </ItemGroup>
+
 </Project>
