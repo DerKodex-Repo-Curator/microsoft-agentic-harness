@@ -90,6 +90,24 @@ public sealed class PackageSkewGuardTests
         PackageSkewGuard.Evaluate(Scan(Plenty, Plenty / 20), []).Should().ContainSingle().Which.Should().Contain("could not be bound");
     }
 
+    [Theory]
+    [InlineData("net10.0/Lib.dll", "net10.0", true)]
+    [InlineData("net10.0/Lib.dll", "net10.0/", true)]
+    [InlineData("net10.0/sub/Lib.dll", "net10.0", true)]
+    [InlineData("NET10.0/Lib.dll", "net10.0", true)]
+    [InlineData("net10.0-windows/Lib.dll", "net10.0", false)]
+    [InlineData("net10.01/Lib.dll", "net10.0", false)]
+    public void HostClosure_IsUnder_ComparesWholePathSegments(string relativePath, string relativeDirectory, bool expected)
+    {
+        // A sibling folder that shares a prefix is not inside the host's output.
+        var root = Path.Combine(Path.GetTempPath(), "bin", "Debug");
+
+        string OnThisPlatform(string relative) =>
+            Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
+
+        HostClosure.IsUnder(OnThisPlatform(relativePath), OnThisPlatform(relativeDirectory)).Should().Be(expected);
+    }
+
     [Fact]
     public void Evaluate_ALongListOfUnexplainedFindings_IsCappedButCounted()
     {

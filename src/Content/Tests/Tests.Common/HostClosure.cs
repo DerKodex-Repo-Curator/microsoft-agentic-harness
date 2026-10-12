@@ -58,7 +58,7 @@ public static class HostClosure
                 var assembly = context.LoadFromAssemblyName(AssemblyName.GetAssemblyName(path));
 
                 // Only what the host ships is scanned; a superseded copy is the framework's, not ours.
-                if (assembly.Location.StartsWith(hostOutput, StringComparison.OrdinalIgnoreCase))
+                if (IsUnder(assembly.Location, hostOutput))
                     loaded.Add(assembly);
             }
             catch (Exception ex) when (ex is BadImageFormatException or FileNotFoundException or FileLoadException)
@@ -69,6 +69,16 @@ public static class HostClosure
         }
 
         return loaded;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="path"/> is inside <paramref name="directory"/>, compared on whole path segments:
+    /// <c>net10.0-windows</c> is not inside <c>net10.0</c>.
+    /// </summary>
+    public static bool IsUnder(string path, string directory)
+    {
+        var root = Path.TrimEndingDirectorySeparator(directory) + Path.DirectorySeparatorChar;
+        return path.StartsWith(root, StringComparison.OrdinalIgnoreCase);
     }
 
     // The host is built into its own folder under the test project's configuration. Where the two
