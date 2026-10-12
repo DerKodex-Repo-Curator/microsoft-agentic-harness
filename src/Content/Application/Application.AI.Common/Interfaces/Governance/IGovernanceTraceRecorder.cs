@@ -81,6 +81,9 @@ public interface IGovernanceTraceRecorder
     /// A child that is authorized as its own agent runs in its own DI scope and records into that
     /// scope's recorder, which is gone when the scope is disposed. Without this the parent turn's trace
     /// — the one reported on the turn result — would silently lose every decision the child made.
+    /// Called by <c>GovernedChildScope</c> when it is disposed and by nothing else (a source-scan test
+    /// enforces it): the trace is cumulative, so a second fold double-counts, and one placed before the
+    /// child's work finishes misses what it did after.
     /// </remarks>
     void Absorb(GovernanceTrace trace);
 

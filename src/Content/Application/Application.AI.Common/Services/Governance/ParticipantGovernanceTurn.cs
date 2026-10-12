@@ -155,26 +155,24 @@ public sealed class ParticipantGovernanceTurn : IAsyncDisposable
         }
     }
 
-    /// <summary>Releases a step's admission pipeline, then its attribution — the reverse of how they were taken.</summary>
+    /// <summary>Releases a step's attribution, then its admission pipeline — the reverse of how they were taken.</summary>
     private sealed class StepScope(IDisposable admission, IDisposable attribution) : IDisposable
     {
         public void Dispose()
         {
-            admission.Dispose();
             attribution.Dispose();
+            admission.Dispose();
         }
     }
 
     /// <summary>
-    /// One wrapped participant's child scope and pipeline: armed lazily on its first run, shared by the
-    /// rest, folded and disposed when the turn ends.
+    /// One wrapped participant's governed child scope: armed lazily on its first run, shared by the rest,
+    /// folded and disposed when the turn ends.
     /// </summary>
     private sealed class ParticipantScope(ParticipantGovernanceTurn turn, string agentId)
     {
         private readonly object _lock = new();
-        private AsyncServiceScope _scope;
-        private IToolCallAdmissionPipeline? _pipeline;
-        private IAgentExecutionContext? _context;
+        private GovernedChildScope? _child;
         private bool _ended;
 
         public string AgentId => agentId;
@@ -188,72 +186,68 @@ public sealed class ParticipantGovernanceTurn : IAsyncDisposable
         /// </summary>
         public IDisposable BeginStep()
         {
-            IToolCallAdmissionPipeline pipeline;
-            IAgentExecutionContext context;
+            GovernedChildScope child;
             lock (_lock)
             {
                 ObjectDisposedException.ThrowIf(_ended, turn);
-                _pipeline ??= Arm();
-                pipeline = _pipeline;
-                context = _context!;
+                child = _child ??= Arm();
             }
 
-            var attribution = context.ReassertAttribution();
-            return new StepScope(ToolAdmissionAccessor.Begin(pipeline, agentId), attribution);
+            // Publish first: it refuses once the turn has ended and the handle is gone, and nothing has been
+            // taken yet that a refusal would leave behind. Attribution second, with the pipeline given back
+            // if it cannot be had.
+            var admission = child.Publish();
+            try
+            {
+                return new StepScope(admission, child.Context.ReassertAttribution());
+            }
+            catch
+            {
+                admission.Dispose();
+                throw;
+            }
         }
 
         public async ValueTask EndAsync()
         {
-            IToolCallAdmissionPipeline? pipeline;
+            GovernedChildScope? child;
             lock (_lock)
             {
                 _ended = true;
-                pipeline = _pipeline;
+                child = _child;
             }
 
-            if (pipeline is null)
-                return;
-
-            try
-            {
-                turn._parentTrace.Absorb(pipeline.GetTrace());
-            }
-            finally
-            {
-                await _scope.DisposeAsync().ConfigureAwait(false);
-            }
+            // Folds this participant's trace into the turn's, then releases the scope.
+            if (child is not null)
+                await child.DisposeAsync().ConfigureAwait(false);
         }
 
-        // The same open/arm/dispose-on-throw sequence as CapabilityMatchSupervisor.ArmDelegationGovernance,
-        // but held for the turn rather than one run — keep the arming itself in step until a shared
-        // governed-child-scope handle replaces both.
-        private IToolCallAdmissionPipeline Arm()
+        private GovernedChildScope Arm()
         {
-            var scope = turn._scopeFactory.CreateAsyncScope();
+            var child = GovernanceArmer.OpenChild(
+                turn._scopeFactory,
+                agentId,
+                GovernanceArmingPolicy.Delegation,
+                turn._parentContext,
+                turn._conversationId,
+                turn._parentTrace);
+
+            // Arming published the participant's attribution and the context holds it for the turn. This
+            // runs inside an iterator step, so that scope cannot be held across the yield: in a shared
+            // baggage holder it would leave the participant's identity on the supervisor's spans until
+            // the turn ended. Release it here, in the flow that took it; every step re-asserts instead.
             try
             {
-                var pipeline = GovernanceArmer.ArmWithAdmission(
-                    scope.ServiceProvider,
-                    agentId,
-                    GovernanceArmingPolicy.Delegation,
-                    turn._parentContext,
-                    turn._conversationId);
-
-                _scope = scope;
-                _context = scope.ServiceProvider.GetRequiredService<IAgentExecutionContext>();
-
-                // Arming published the participant's attribution and the context holds it for the turn. This
-                // runs inside an iterator step, so that scope cannot be held across the yield: in a shared
-                // baggage holder it would leave the participant's identity on the supervisor's spans until
-                // the turn ended. Release it here, in the flow that took it; every step re-asserts instead.
-                _context.ReleaseTurnAttribution();
-                return pipeline;
+                child.Context.ReleaseTurnAttribution();
             }
             catch
             {
-                scope.Dispose();
+                // Nothing owns the handle until it is returned, so a failed release would orphan the scope.
+                GovernedChildScope.DisposeQuietly(child);
                 throw;
             }
+
+            return child;
         }
     }
 }

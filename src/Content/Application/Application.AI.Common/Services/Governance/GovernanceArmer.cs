@@ -18,11 +18,13 @@ namespace Application.AI.Common.Services.Governance;
 /// publishes the turn's governance attribution), then identity, then the pipeline.
 /// </para>
 /// <para>
-/// <strong>Deliberately does not own the DI scope</strong> (creation and disposal differ per caller)
-/// <strong>and does not publish any ambient accessor</strong> — callers wrap the work in
-/// <see cref="ToolAdmissionAccessor.Begin(IToolCallAdmissionPipeline)"/> themselves. Sites that own
-/// their request scope rather than opening a child one (the MediatR behaviours, the turn handlers,
-/// <c>PlanRunExecutor</c>) do not use it.
+/// <strong><see cref="Arm"/> and <see cref="ArmWithAdmission"/> do not own the DI scope</strong> (creation
+/// and disposal differ per caller) <strong>and publish no ambient accessor</strong> — for a surface that
+/// manages its own scope. <see cref="OpenChild"/> is the other half: it opens the scope, arms it, and
+/// returns a <see cref="GovernedChildScope"/> that owns the scope and, on dispose, folds the child's trace
+/// into the parent's before releasing it. Delegation and Magentic participants use it; sub-plans and
+/// direct invocation still arm a scope they manage themselves. Sites that own their request scope rather
+/// than opening a child one (the MediatR behaviours, the turn handlers, <c>PlanRunExecutor</c>) use neither.
 /// </para>
 /// </remarks>
 public static class GovernanceArmer
@@ -89,6 +91,45 @@ public static class GovernanceArmer
         var pipeline = childServices.GetRequiredService<IToolCallAdmissionPipeline>();
         pipeline.Reset();
         return pipeline;
+    }
+
+    /// <summary>
+    /// Opens a child DI scope, arms it as <paramref name="agentId"/> (<see cref="ArmWithAdmission"/>), and
+    /// returns the handle that owns it. The scope is disposed here if arming throws, because nothing has
+    /// been handed back yet to dispose it — which would otherwise also leak the attribution that arming
+    /// just published.
+    /// </summary>
+    /// <param name="scopeFactory">Opens the child scope.</param>
+    /// <param name="agentId">The agent the child governs as.</param>
+    /// <param name="policy">Which values are inherited from <paramref name="parent"/> and which minted.</param>
+    /// <param name="parent">The parent turn's context, or <see langword="null"/> when there is none.</param>
+    /// <param name="fallbackScopeId">Used where the policy inherits but the parent supplies nothing.</param>
+    /// <param name="parentTrace">
+    /// The parent turn's trace recorder, which the child's trace is folded into when the handle is disposed;
+    /// <see langword="null"/> for a surface with no turn trace to report into.
+    /// </param>
+    public static GovernedChildScope OpenChild(
+        IServiceScopeFactory scopeFactory,
+        string agentId,
+        GovernanceArmingPolicy policy,
+        IAgentExecutionContext? parent = null,
+        string? fallbackScopeId = null,
+        IGovernanceTraceRecorder? parentTrace = null)
+    {
+        ArgumentNullException.ThrowIfNull(scopeFactory);
+
+        var scope = scopeFactory.CreateAsyncScope();
+        try
+        {
+            var pipeline = ArmWithAdmission(scope.ServiceProvider, agentId, policy, parent, fallbackScopeId);
+            var context = scope.ServiceProvider.GetRequiredService<IAgentExecutionContext>();
+            return new GovernedChildScope(scope, agentId, context, pipeline, parentTrace);
+        }
+        catch
+        {
+            GovernedChildScope.DisposeQuietly(scope);
+            throw;
+        }
     }
 
     private static string? ResolveCallOnceScope(

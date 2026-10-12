@@ -259,6 +259,22 @@ public sealed class ParticipantGovernanceTests : IDisposable
     }
 
     [Fact]
+    public async Task Wrap_WhenReleasingTheArmingAttributionThrows_ReleasesTheScopeAndSurfacesTheFailure()
+    {
+        // The arm succeeded and the handle exists, but nothing owns it yet: if the release throws, the
+        // scope (and the trace it holds) would be orphaned and the next step would arm a second one.
+        var agent = _turn.Wrap(new ProbeAgent(), Participant);
+        _attribution.ThrowOnRelease = true;
+
+        Func<Task> act = async () => await agent.RunAsync("go");
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("attribution release failed");
+        _attribution.ThrowOnRelease = false;
+        _armed.Single(a => a.Context.AgentId == Participant).Marker.Disposed.Should().BeTrue(
+            "an arming that fails after the scope opened must not leave the scope behind");
+    }
+
+    [Fact]
     public async Task RunAsync_FoldsTheParticipantsTraceIntoTheTurnsTrace()
     {
         var probe = new ProbeAgent(traceToReport: Trace("participant-call"));
@@ -371,6 +387,9 @@ public sealed class ParticipantGovernanceTests : IDisposable
 
         public int Released { get; private set; }
 
+        /// <summary>When set, releasing a published attribution throws.</summary>
+        public bool ThrowOnRelease { get; set; }
+
         public IDisposable BeginTurn(string agentId, string conversationId)
         {
             _turns.Add((agentId, conversationId));
@@ -379,7 +398,12 @@ public sealed class ParticipantGovernanceTests : IDisposable
 
         private sealed class Release(RecordingAttribution owner) : IDisposable
         {
-            public void Dispose() => owner.Released++;
+            public void Dispose()
+            {
+                owner.Released++;
+                if (owner.ThrowOnRelease)
+                    throw new InvalidOperationException("attribution release failed");
+            }
         }
     }
 
