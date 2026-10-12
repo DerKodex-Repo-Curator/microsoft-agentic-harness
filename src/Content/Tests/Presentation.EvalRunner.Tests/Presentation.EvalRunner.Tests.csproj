@@ -22,4 +22,10 @@
     <ProjectReference Include="../Tests.Common/Tests.Common.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The host declares Microsoft.AspNetCore.App in its runtimeconfig, so the framework must be present in
+         the test process for PackageSkewTests to bind framework references the way the host does. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
 </Project>
