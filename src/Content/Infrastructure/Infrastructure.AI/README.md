@@ -42,7 +42,7 @@ services.AddInfrastructureAIDependencies(appConfig);
 **Why it exists:** The harness must support multiple AI providers (Azure OpenAI, OpenAI, Azure AI Inference for Claude/Mistral, Anthropic via Azure Foundry, AI Foundry Persistent Agents, and an Echo client for testing) without coupling the orchestration layer to any specific SDK.
 
 **How it works:**
-1. On startup, `RegisterAIClients` in DependencyInjection.cs reads `AppConfig.AI.AgentFramework` and registers the appropriate SDK client (AzureOpenAIClient or OpenAIClient) into DI.
+1. On startup, `RegisterAIClients` in DependencyInjection.cs reads `AppConfig.AI.AgentFramework` and registers the appropriate SDK client into DI. Azure OpenAI and OpenAI are both the OpenAI SDK's `OpenAIClient`; the Azure one is registered under a DI key (`AgentFrameworkHelper.AzureOpenAIClientKey`) and points at the resource's `/openai/v1/` route, so neither answers for the other. The Azure client sends the key as `Authorization: Bearer` to `{endpoint}/openai/v1/` with the deployment name as the model. **A gateway in front of the resource must serve that route and accept a bearer key**; one that only exposes the legacy `/openai/deployments/{name}/` routes or reads the `api-key` header will fail with 404 or 401.
 2. When an agent needs a chat client, it calls `IChatClientFactory.GetChatClientAsync(clientType, deploymentOrModelId)`.
 3. The factory resolves the correct SDK, creates or retrieves a cached `IChatClient`, and returns it.
 4. For Azure AI Inference (Claude, Mistral on Azure), a `ChatCompletionsClient` is created with `api-key` header auth.
@@ -519,7 +519,7 @@ Check structured logs for entries with `Permission resolved for agent {AgentId},
 - `Anthropic.SDK` -- Anthropic Messages API client
 - `Azure.AI.Agents.Persistent` -- AI Foundry persistent agent CRUD
 - `Azure.AI.Inference` -- Azure AI Inference (ChatCompletionsClient)
-- `Azure.AI.OpenAI` -- Azure OpenAI SDK
+- `OpenAI` -- OpenAI SDK (also used for Azure OpenAI, via the resource's `/openai/v1/` route)
 - `Microsoft.Agents.AI.OpenAI` -- Microsoft Agent Framework adapters
 - `Microsoft.Extensions.AI.AzureAIInference` -- IChatClient bridge for Inference
 - `Microsoft.Extensions.Caching.Memory` -- Client caching in ChatClientFactory

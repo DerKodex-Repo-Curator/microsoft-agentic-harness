@@ -1,5 +1,4 @@
 using Azure;
-using Azure.AI.OpenAI;
 using Domain.Common.Config;
 using Domain.Common.Config.AI;
 using Domain.Common.Config.AI.AIFoundry;
@@ -187,7 +186,7 @@ public sealed class ChatClientFactoryAvailabilityTests : IDisposable
 
     /// <summary>
     /// The config flag alone is not enough — <c>IsAvailable</c> must also confirm the keyed
-    /// <see cref="AzureOpenAIClient"/> DI registration actually exists, the same "config says yes,
+    /// <c>ResponsesClient</c> DI registration actually exists, the same "config says yes,
     /// but was it actually registered" split every other provider check makes.
     /// </summary>
     [Fact]

@@ -1,7 +1,6 @@
 using Application.AI.Common.Interfaces;
 using Application.AI.Common.Models;
 using Azure.AI.Agents.Persistent;
-using Azure.AI.OpenAI;
 using Domain.Common.Config;
 using Domain.Common.Config.AI;
 using Infrastructure.AI.Clients;
@@ -169,7 +168,8 @@ public sealed partial class ChatClientFactory : IChatClientFactory, IDisposable
     {
         return clientType switch
         {
-            AIAgentFrameworkClientType.AzureOpenAI => _serviceProvider.GetService<AzureOpenAIClient>() != null,
+            AIAgentFrameworkClientType.AzureOpenAI => _serviceProvider.GetKeyedService<OpenAIClient>(
+                AgentFrameworkHelper.AzureOpenAIClientKey) != null,
             AIAgentFrameworkClientType.OpenAI => _serviceProvider.GetService<OpenAIClient>() != null,
             AIAgentFrameworkClientType.AzureAIInference => IsEndpointSatisfied(clientType)
                 && _appConfig.CurrentValue.AI.AgentFramework.IsConfigured,

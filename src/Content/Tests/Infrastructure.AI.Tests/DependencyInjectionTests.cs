@@ -316,10 +316,78 @@ public sealed class DependencyInjectionTests
         services.AddInfrastructureAIDependencies(config);
         using var provider = services.BuildServiceProvider();
 
-        // With unconfigured AgentFramework, neither AzureOpenAIClient nor OpenAIClient should be registered
+        // With unconfigured AgentFramework, neither the Azure OpenAI client nor OpenAIClient should be registered
         var factory = provider.GetRequiredService<IChatClientFactory>();
         factory.IsAvailable(Domain.Common.Config.AI.AIAgentFrameworkClientType.AzureOpenAI).Should().BeFalse();
         factory.IsAvailable(Domain.Common.Config.AI.AIAgentFrameworkClientType.OpenAI).Should().BeFalse();
+    }
+
+    private static Domain.Common.Config.AppConfig ConfiguredFor(
+        Domain.Common.Config.AI.AIAgentFrameworkClientType clientType)
+    {
+        var config = IsolatedAppConfig.Create();
+        config.AI.AgentFramework.ClientType = clientType;
+        config.AI.AgentFramework.Endpoint = "https://myresource.openai.azure.com";
+        config.AI.AgentFramework.ApiKey = "fake-key";
+        return config;
+    }
+
+    [Fact]
+    public async Task RegisterAIClients_AzureOpenAI_IsAvailable_AndBuildsBothChatClientVariants()
+    {
+        var config = ConfiguredFor(Domain.Common.Config.AI.AIAgentFrameworkClientType.AzureOpenAI);
+        var services = CreateBaseServices(config);
+        services.AddInfrastructureAIDependencies(config);
+        using var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IChatClientFactory>();
+
+        factory.IsAvailable(Domain.Common.Config.AI.AIAgentFrameworkClientType.AzureOpenAI).Should().BeTrue();
+        (await factory.GetChatClientAsync(
+            Domain.Common.Config.AI.AIAgentFrameworkClientType.AzureOpenAI, "my-deployment")).Should().NotBeNull();
+        (await factory.GetChatClientWithoutProviderRetryAsync(
+            Domain.Common.Config.AI.AIAgentFrameworkClientType.AzureOpenAI, "my-deployment")).Should().NotBeNull();
+    }
+
+    [Fact]
+    public void RegisterAIClients_AzureOpenAI_DoesNotAnswerForThePlainOpenAIProvider()
+    {
+        // Both providers are an OpenAIClient now. If the Azure one were registered by type it would make
+        // the plain OpenAI provider look configured, and be handed an Azure key and endpoint.
+        var config = ConfiguredFor(Domain.Common.Config.AI.AIAgentFrameworkClientType.AzureOpenAI);
+        var services = CreateBaseServices(config);
+        services.AddInfrastructureAIDependencies(config);
+        using var provider = services.BuildServiceProvider();
+
+        provider.GetService<OpenAI.OpenAIClient>().Should().BeNull();
+        provider.GetRequiredService<IChatClientFactory>()
+            .IsAvailable(Domain.Common.Config.AI.AIAgentFrameworkClientType.OpenAI).Should().BeFalse();
+    }
+
+    [Fact]
+    public void RegisterAIClients_PlainOpenAI_DoesNotAnswerForAzureOpenAI()
+    {
+        var config = ConfiguredFor(Domain.Common.Config.AI.AIAgentFrameworkClientType.OpenAI);
+        var services = CreateBaseServices(config);
+        services.AddInfrastructureAIDependencies(config);
+        using var provider = services.BuildServiceProvider();
+
+        provider.GetRequiredService<IChatClientFactory>()
+            .IsAvailable(Domain.Common.Config.AI.AIAgentFrameworkClientType.AzureOpenAI).Should().BeFalse();
+    }
+
+    [Fact]
+    public void RegisterAIClients_AzureOpenAI_ChatProviderServesEmbeddings()
+    {
+        var config = ConfiguredFor(Domain.Common.Config.AI.AIAgentFrameworkClientType.AzureOpenAI);
+        var services = CreateBaseServices(config);
+        services.AddInfrastructureAIDependencies(config);
+        using var provider = services.BuildServiceProvider();
+
+        var embeddings = provider.GetRequiredService<
+            Microsoft.Extensions.AI.IEmbeddingGenerator<string, Microsoft.Extensions.AI.Embedding<float>>>();
+
+        embeddings.GetType().Name.Should().NotBe(
+            "UnconfiguredEmbeddingGenerator", "the Azure chat provider reuses its client for embeddings");
     }
 
     [Fact]

@@ -1,5 +1,5 @@
+using System.ClientModel;
 using System.ClientModel.Primitives;
-using Azure.AI.OpenAI;
 using Azure.Core;
 using Infrastructure.AI.Caching;
 using OpenAI;
@@ -13,7 +13,7 @@ namespace Infrastructure.AI.Helpers;
 /// </summary>
 /// <remarks>
 /// Lives in Infrastructure.AI because it depends on external SDK types
-/// (<see cref="AzureOpenAIClientOptions"/>, <see cref="OpenAIClientOptions"/>).
+/// (<see cref="OpenAIClientOptions"/>).
 /// Consumed by <see cref="Factories.ChatClientFactory"/> and DI registration.
 /// </remarks>
 public static class AgentFrameworkHelper
@@ -46,9 +46,116 @@ public static class AgentFrameworkHelper
     public const string FoundryDirectResponsesNoRetryClientKey = "foundry-direct-responses-no-retry";
 
     /// <summary>
-    /// The Entra scope the direct Responses client requests a token for. The same audience
-    /// <see cref="AzureOpenAIClient"/> uses by default, so moving off that client does not change
-    /// which token the resource is asked to accept.
+    /// DI key for the <see cref="OpenAIClient"/> targeting an Azure OpenAI resource's <c>/openai/v1/</c>
+    /// surface (<see cref="Domain.Common.Config.AI.AIAgentFrameworkClientType.AzureOpenAI"/>). Keyed rather
+    /// than resolved by type because <see cref="OpenAIClient"/> is also what the plain
+    /// <see cref="Domain.Common.Config.AI.AIAgentFrameworkClientType.OpenAI"/> type registers, and the
+    /// Azure client must never answer for it (nor the other way round) when one is asked for by type.
+    /// </summary>
+    public const string AzureOpenAIClientKey = "azure-openai";
+
+    /// <summary>
+    /// DI key for the retry-disabled variant of <see cref="AzureOpenAIClientKey"/>, resolved by the
+    /// provider fallback chain. Kept separate from <see cref="NoProviderRetryClientKey"/> for the same
+    /// reason as <see cref="AzureOpenAIClientKey"/>: that slot is the plain OpenAI client's.
+    /// </summary>
+    public const string AzureOpenAINoRetryClientKey = "azure-openai-no-retry";
+
+    /// <summary>
+    /// Creates the OpenAI-protocol client for an Azure OpenAI resource, API-key authenticated, against the
+    /// resource's GA <c>/openai/v1/</c> surface (<see cref="Domain.Common.Config.AI.AIAgentFrameworkClientType.AzureOpenAI"/>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Built on the OpenAI SDK rather than on <c>AzureOpenAIClient</c> from Azure.AI.OpenAI. That package's
+    /// newest published version (2.9.0-beta.1) is compiled against an older OpenAI library than the one
+    /// Agent Framework 1.21+ requires, so any surface of it can throw <see cref="MissingMethodException"/>
+    /// at runtime, a failure the compiler cannot see (the Responses surface already did). Microsoft's v1
+    /// API removes the need for a separate Azure client: the deployment name is the request's <c>model</c>,
+    /// there is no dated <c>api-version</c>, and the key is sent as a bearer credential.
+    /// </para>
+    /// <para>
+    /// The same timeout and retry-suppression defaults apply as for every OpenAI-protocol client the
+    /// harness builds (<see cref="ApplyPipelineDefaults"/>).
+    /// </para>
+    /// </remarks>
+    /// <param name="resourceEndpoint">
+    /// The Azure OpenAI resource endpoint, e.g. <c>https://my-resource.openai.azure.com</c>. A value that
+    /// already ends in <c>/openai/v1</c> is used as given.
+    /// </param>
+    /// <param name="apiKey">The resource's API key.</param>
+    /// <param name="disableProviderRetry">
+    /// When true the SDK makes no retries of its own, leaving retry to the Polly pipeline.
+    /// </param>
+    public static OpenAIClient CreateAzureOpenAIV1Client(
+        Uri resourceEndpoint,
+        string apiKey,
+        bool disableProviderRetry = false) =>
+        CreateAzureOpenAIV1Client(resourceEndpoint, apiKey, disableProviderRetry, transport: null);
+
+    /// <summary>
+    /// As <see cref="CreateAzureOpenAIV1Client(Uri, string, bool)"/> with a replaceable HTTP transport.
+    /// Internal so the seam cannot be used downstream to wrap a transport that sees the credential;
+    /// tests reach it through InternalsVisibleTo.
+    /// </summary>
+    internal static OpenAIClient CreateAzureOpenAIV1Client(
+        Uri resourceEndpoint,
+        string apiKey,
+        bool disableProviderRetry,
+        PipelineTransport? transport)
+    {
+        ArgumentNullException.ThrowIfNull(resourceEndpoint);
+        ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
+
+        var options = GetOpenAIClientOptions(
+            AzureOpenAIV1Endpoint(resourceEndpoint).AbsoluteUri, disableProviderRetry: disableProviderRetry);
+        if (transport is not null) options.Transport = transport;
+
+        return new OpenAIClient(new ApiKeyCredential(apiKey), options);
+    }
+
+    // The v1 base URL for a resource endpoint, with one trailing slash. Accepts the bare resource endpoint
+    // (what configuration holds today), one ending in /openai, or one already ending in /openai/v1, so a
+    // consumer who pasted the base URL from Microsoft's docs does not end up with /openai/v1/openai/v1/. A
+    // path prefix in front (a gateway) is kept.
+    //
+    // The key travels as a bearer credential, so the endpoint is checked once, here, at startup rather than
+    // discovered as a 404 or a leak later: https only (loopback http is allowed for local stubs), no
+    // credentials, query or fragment in the URL, and not a legacy per-deployment URL, which would build a
+    // route that cannot exist.
+    private static Uri AzureOpenAIV1Endpoint(Uri resourceEndpoint)
+    {
+        const string setting = "AppConfig:AI:AgentFramework:Endpoint";
+
+        if (resourceEndpoint.Scheme != Uri.UriSchemeHttps && !resourceEndpoint.IsLoopback)
+            throw new InvalidOperationException(
+                $"{setting} must use https because the API key is sent as a bearer credential (http is allowed only for loopback).");
+
+        if (!string.IsNullOrEmpty(resourceEndpoint.UserInfo))
+            throw new InvalidOperationException($"{setting} must not contain credentials in the URL.");
+
+        if (!string.IsNullOrEmpty(resourceEndpoint.Query) || !string.IsNullOrEmpty(resourceEndpoint.Fragment))
+            throw new InvalidOperationException(
+                $"{setting} must be the resource endpoint without a query string or fragment; the v1 surface takes no api-version.");
+
+        var path = resourceEndpoint.AbsolutePath.TrimEnd('/');
+        if (path.Contains("/deployments/", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                $"{setting} must be the resource endpoint, not a per-deployment URL: the deployment name is the model, not part of the path (found '{path}').");
+
+        var v1Path = path switch
+        {
+            _ when path.EndsWith("/openai/v1", StringComparison.OrdinalIgnoreCase) => path,
+            _ when path.EndsWith("/openai", StringComparison.OrdinalIgnoreCase) => path + "/v1",
+            _ => path + "/openai/v1"
+        };
+
+        return new UriBuilder(resourceEndpoint) { Path = v1Path + "/" }.Uri;
+    }
+
+    /// <summary>
+    /// The Entra scope the direct Responses client requests a token for: the Azure OpenAI /
+    /// Cognitive Services audience, the one the resource has always been asked to accept.
     /// </summary>
     private const string AzureEntraScope = "https://cognitiveservices.azure.com/.default";
 
@@ -59,11 +166,11 @@ public static class AgentFrameworkHelper
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Built on the OpenAI SDK against the resource's <c>/openai/v1/</c> surface rather than on
-    /// <c>AzureOpenAIClient.GetResponsesClient()</c>. Azure.AI.OpenAI's newest published version
-    /// (2.9.0-beta.1) is compiled against an older OpenAI library, and its Responses constructor
-    /// throws <see cref="MissingMethodException"/> at runtime once the OpenAI library is the one
-    /// Agent Framework 1.21+ requires, a failure the compiler cannot see.
+    /// Built on the OpenAI SDK against the resource's <c>/openai/v1/</c> surface, the same route
+    /// <see cref="CreateAzureOpenAIV1Client(Uri, string, bool)"/> uses. The earlier route through
+    /// Azure.AI.OpenAI's <c>GetResponsesClient()</c> built fine and threw
+    /// <see cref="MissingMethodException"/> at runtime once the OpenAI library moved on, a failure
+    /// the compiler cannot see.
     /// </para>
     /// <para>
     /// Timeout and retry suppression come from the same <see cref="ApplyPipelineDefaults"/> every
@@ -106,28 +213,6 @@ public static class AgentFrameworkHelper
         if (transport is not null) options.Transport = transport;
 
         return new ResponsesClient(new BearerTokenPolicy(credential, AzureEntraScope), options);
-    }
-
-    /// <summary>
-    /// Gets configured options for <see cref="AzureOpenAIClient"/>.
-    /// </summary>
-    /// <param name="networkTimeoutSeconds">Network timeout in seconds. Default: 300.</param>
-    /// <param name="disableProviderRetry">
-    /// When true, turns off the SDK's own retry policy, leaving retry entirely to the caller.
-    /// Measured default behaviour is four requests for a single rate-limited call. Set this only
-    /// when something else is already retrying — see
-    /// <see cref="Application.AI.Common.Interfaces.IChatClientFactory.GetChatClientWithoutProviderRetryAsync"/>.
-    /// </param>
-    /// <returns>Configured <see cref="AzureOpenAIClientOptions"/>.</returns>
-    public static AzureOpenAIClientOptions GetAzureOpenAIClientOptions(
-        int networkTimeoutSeconds = DefaultNetworkTimeoutSeconds,
-        bool disableProviderRetry = false)
-    {
-        var options = new AzureOpenAIClientOptions { UserAgentApplicationId = UserAgentValue };
-
-        ApplyPipelineDefaults(options, networkTimeoutSeconds, disableProviderRetry);
-
-        return options;
     }
 
     // The settings every SDK client option type shares through ClientPipelineOptions: one place for

@@ -72,11 +72,10 @@
     <PackageVersion Include="Cronos" Version="0.13.0" />
     <PackageVersion Include="Anthropic.SDK" Version="5.10.0" />
     <PackageVersion Include="Azure.AI.Inference" Version="1.0.0-beta.5" />
-    <!-- Newest published, and compiled against an older OpenAI library than Agent Framework resolves.
-         A mismatch throws MissingMethodException at runtime, not at build time (it did on the
-         Responses constructor). AzureOpenAiSurfaceCompatibilityTests sends a request through each
-         surface still used; re-run it on any OpenAI bump. Moving off this package: #799. -->
-    <PackageVersion Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
+    <!-- Agent Framework's OpenAI adapters. A package compiled against an older OpenAI library than the
+         one resolved throws MissingMethodException at runtime, not at build time (Azure.AI.OpenAI did, and
+         was removed in #799). The per-host PackageSkewTests check every cross-assembly call; the wire-shape
+         tests (AzureOpenAiV1ClientTests) send a request through each OpenAI-protocol surface. -->
     <PackageVersion Include="Microsoft.Agents.AI.OpenAI" Version="1.24.0" />
     <!-- Foundry ships as a preview line that tracks the core family one-for-one
          (1.24.0-preview.261006.1 pairs with 1.24.0); bump both together. -->

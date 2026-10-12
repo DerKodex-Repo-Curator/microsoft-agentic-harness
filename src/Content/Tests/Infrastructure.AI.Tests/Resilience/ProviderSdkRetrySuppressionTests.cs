@@ -3,7 +3,6 @@ using System.Net.Sockets;
 using System.Text;
 using Azure;
 using Azure.AI.Inference;
-using Azure.AI.OpenAI;
 using ChatRole = Microsoft.Extensions.AI.ChatRole;
 using FluentAssertions;
 using Infrastructure.AI.Helpers;
@@ -13,7 +12,7 @@ using Xunit;
 namespace Infrastructure.AI.Tests.Resilience;
 
 /// <summary>
-/// Drives the real Azure OpenAI and Azure AI Inference clients against a stub HTTP server to
+/// Drives the real Azure OpenAI (OpenAI SDK, v1 route) and Azure AI Inference clients against a stub HTTP server to
 /// confirm that the retry-suppressing client options actually suppress retries.
 /// </summary>
 /// <remarks>
@@ -35,10 +34,7 @@ public sealed class ProviderSdkRetrySuppressionTests
     public async Task AzureOpenAI_DefaultOptions_RetriesARateLimitInternally()
     {
         using var server = new StubHttpServer(HttpStatusCode.TooManyRequests);
-        var chat = new AzureOpenAIClient(
-                server.BaseAddress,
-                new AzureKeyCredential("fake-key"),
-                AgentFrameworkHelper.GetAzureOpenAIClientOptions())
+        var chat = AgentFrameworkHelper.CreateAzureOpenAIV1Client(server.BaseAddress, "fake-key")
             .GetChatClient("gpt-4o")
             .AsIChatClient();
 
@@ -53,10 +49,8 @@ public sealed class ProviderSdkRetrySuppressionTests
     public async Task AzureOpenAI_RetrySuppressed_MakesExactlyOneRequest()
     {
         using var server = new StubHttpServer(HttpStatusCode.TooManyRequests);
-        var chat = new AzureOpenAIClient(
-                server.BaseAddress,
-                new AzureKeyCredential("fake-key"),
-                AgentFrameworkHelper.GetAzureOpenAIClientOptions(disableProviderRetry: true))
+        var chat = AgentFrameworkHelper.CreateAzureOpenAIV1Client(
+                server.BaseAddress, "fake-key", disableProviderRetry: true)
             .GetChatClient("gpt-4o")
             .AsIChatClient();
 

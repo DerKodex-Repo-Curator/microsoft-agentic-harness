@@ -119,7 +119,7 @@ Plugin-boundary governance adds two layers of control. At **provisioning time**,
 
 LLM-powered agents are notoriously hard to debug. A conversation that goes sideways might involve dozens of turns, multiple tool calls, and branching logic that's invisible from the outside.
 
-The harness instruments everything with OpenTelemetry. Every agent turn creates a span. Every tool call creates a child span. Conversation IDs, turn indices, and agent names are tagged automatically by a custom span processor that understands AI workloads — it recognizes spans from Microsoft.Extensions.AI, Semantic Kernel, and Azure.AI.OpenAI and enriches them with agentic context.
+The harness instruments everything with OpenTelemetry. Every agent turn creates a span. Every tool call creates a child span. Conversation IDs, turn indices, and agent names are tagged automatically by a custom span processor that understands AI workloads — it recognizes spans from Microsoft.Extensions.AI, Semantic Kernel, and the Microsoft Agent Framework and enriches them with agentic context.
 
 Traces flow to Jaeger for visualization. Metrics flow to Prometheus. Logs flow through structured JSON logging. When something goes wrong, you don't guess — you trace the exact path the agent took, see what tools it called, and read the token counts at each step.
 
