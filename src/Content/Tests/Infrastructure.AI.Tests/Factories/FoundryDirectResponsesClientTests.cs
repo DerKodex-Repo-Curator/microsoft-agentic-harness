@@ -15,7 +15,7 @@ namespace Infrastructure.AI.Tests.Factories;
 /// route, the Entra bearer token and scope, the deployment as the model, and retry behaviour.
 /// </summary>
 /// <remarks>
-/// The previous implementation (<c>AzureOpenAIClient.GetResponsesClient()</c>) built fine and then
+/// The previous implementation (Azure.AI.OpenAI's <c>GetResponsesClient()</c>) built fine and then
 /// threw <see cref="MissingMethodException"/> at runtime once the OpenAI library moved on, which no
 /// compile-time check can see. Constructing the client and sending one request is the only check
 /// that would have caught it, so that is what these tests do.
@@ -42,7 +42,7 @@ public sealed class FoundryDirectResponsesClientTests
         credential.RequestedScopes.Should().ContainSingle()
             .Which.Should().Be(
                 "https://cognitiveservices.azure.com/.default",
-                "the audience AzureOpenAIClient requested must not change when the client does");
+                "the audience the resource has always been asked to accept must not change when the client does");
         response.Text.Should().Be("hello back");
     }
 

@@ -4,7 +4,6 @@ using Application.AI.Common.Interfaces.RAG;
 using Application.AI.Common.Interfaces.Sandbox;
 using Application.AI.Common.Interfaces.Tools;
 using Azure.AI.Agents.Persistent;
-using Azure.AI.OpenAI;
 using Azure.AI.Projects;
 using Application.Common.Factories;
 using Domain.Common.Config;
@@ -261,7 +260,7 @@ public static partial class DependencyInjection
     }
 
     /// <summary>
-    /// Registers AI client singletons (AzureOpenAIClient, OpenAIClient) based on
+    /// Registers AI client singletons (an OpenAIClient per OpenAI-protocol provider) based on
     /// the configured <see cref="AIAgentFrameworkClientType"/> and wires the
     /// embedding generator used by RAG and knowledge-graph features.
     /// </summary>
@@ -302,17 +301,17 @@ public static partial class DependencyInjection
                 if (!string.IsNullOrWhiteSpace(framework.Endpoint)
                     && Uri.TryCreate(framework.Endpoint, UriKind.Absolute, out var aoaiUri))
                 {
-                    services.AddSingleton(new AzureOpenAIClient(
-                        aoaiUri,
-                        new Azure.AzureKeyCredential(framework.ApiKey!),
-                        AgentFrameworkHelper.GetAzureOpenAIClientOptions()));
+                    // Keyed, not resolved by type: OpenAIClient is also the plain OpenAI provider's type,
+                    // and the Azure client must not answer for it. The default is built now, so a blank
+                    // key fails at startup as it always has; the retry-free variant is built on first use.
+                    services.AddKeyedSingleton(
+                        AgentFrameworkHelper.AzureOpenAIClientKey,
+                        AgentFrameworkHelper.CreateAzureOpenAIV1Client(aoaiUri, framework.ApiKey!));
 
                     services.AddKeyedSingleton(
-                        AgentFrameworkHelper.NoProviderRetryClientKey,
-                        (_, _) => new AzureOpenAIClient(
-                            aoaiUri,
-                            new Azure.AzureKeyCredential(framework.ApiKey!),
-                            AgentFrameworkHelper.GetAzureOpenAIClientOptions(disableProviderRetry: true)));
+                        AgentFrameworkHelper.AzureOpenAINoRetryClientKey,
+                        (_, _) => AgentFrameworkHelper.CreateAzureOpenAIV1Client(
+                            aoaiUri, framework.ApiKey!, disableProviderRetry: true));
                 }
                 break;
 
@@ -398,10 +397,7 @@ public static partial class DependencyInjection
                         "AppConfig:AI:Embedding:Endpoint must be a valid absolute URI when " +
                         "ClientType=AzureOpenAI.");
                 }
-                var aoaiClient = new AzureOpenAIClient(
-                    aoaiUri,
-                    new Azure.AzureKeyCredential(embedding.ApiKey!),
-                    AgentFrameworkHelper.GetAzureOpenAIClientOptions());
+                var aoaiClient = AgentFrameworkHelper.CreateAzureOpenAIV1Client(aoaiUri, embedding.ApiKey!);
                 services.AddSingleton<IEmbeddingGenerator<string, Embedding<float>>>(
                     _ => aoaiClient.GetEmbeddingClient(deployment).AsIEmbeddingGenerator());
                 break;
@@ -434,7 +430,7 @@ public static partial class DependencyInjection
         {
             case AIAgentFrameworkClientType.AzureOpenAI:
                 services.AddSingleton<IEmbeddingGenerator<string, Embedding<float>>>(sp =>
-                    sp.GetRequiredService<AzureOpenAIClient>()
+                    sp.GetRequiredKeyedService<OpenAIClient>(AgentFrameworkHelper.AzureOpenAIClientKey)
                       .GetEmbeddingClient(deployment)
                       .AsIEmbeddingGenerator());
                 break;

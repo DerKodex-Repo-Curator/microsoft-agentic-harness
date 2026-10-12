@@ -8,7 +8,13 @@ public class AgentFrameworkConfig
 {
     /// <summary>
     /// Gets or sets the provider endpoint URL.
-    /// For Azure OpenAI: <c>https://your-resource.openai.azure.com/</c>.
+    /// For Azure OpenAI: <c>https://your-resource.openai.azure.com/</c>. The client calls the resource's
+    /// GA <c>/openai/v1/</c> route and sends the API key as <c>Authorization: Bearer</c> (not the legacy
+    /// <c>api-key</c> header), with the deployment name as the model and no <c>api-version</c>. A gateway in
+    /// front of the resource (API Management, a proxy) must therefore serve <c>/openai/v1/</c> and accept a
+    /// bearer key; one that only exposes the legacy <c>/openai/deployments/{name}/</c> routes or reads the
+    /// <c>api-key</c> header will return 404 or 401. The endpoint must be https (loopback http is allowed
+    /// for local stubs) with no credentials, query string or fragment.
     /// For OpenAI: leave empty (uses default endpoint).
     /// Store in User Secrets or Key Vault — never in appsettings.json.
     /// </summary>

@@ -3,7 +3,6 @@ using Anthropic.SDK.Messaging;
 using Application.AI.Common.Exceptions;
 using Azure.AI.Agents.Persistent;
 using Azure.AI.Inference;
-using Azure.AI.OpenAI;
 using Domain.Common.Config;
 using Infrastructure.AI.Clients;
 using Infrastructure.AI.Helpers;
@@ -22,7 +21,10 @@ public sealed partial class ChatClientFactory
     private Task<IChatClient> GetAzureOpenAIChatClientAsync(
         string deploymentName, bool disableProviderRetry, CancellationToken cancellationToken)
     {
-        var client = ResolveSdkClient<AzureOpenAIClient>(disableProviderRetry)
+        var client = _serviceProvider.GetKeyedService<OpenAIClient>(
+                disableProviderRetry
+                    ? AgentFrameworkHelper.AzureOpenAINoRetryClientKey
+                    : AgentFrameworkHelper.AzureOpenAIClientKey)
             ?? throw new AiProviderNotConfiguredException(
                 "Azure OpenAI is not configured. Set AppConfig:AI:AgentFramework:Endpoint and ApiKey, " +
                 "and ensure ClientType matches your deployment.");

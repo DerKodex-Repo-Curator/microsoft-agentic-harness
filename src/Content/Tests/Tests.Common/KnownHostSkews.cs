@@ -13,7 +13,7 @@ namespace Tests.Common;
 /// so none carries a number except where one exists.
 /// </para>
 /// <para>
-/// The Anthropic.SDK, Azure.AI.OpenAI and Azure.AI.AgentServer.Core entries are real package skew, found by
+/// The Anthropic.SDK and Azure.AI.AgentServer.Core entries are real package skew, found by
 /// the guard, that the hand-written surface tests did not reach. They name the one member that is broken,
 /// not its type, so a second, different break on the same type still fails. The entries for packages that
 /// are not shipped are prefixes, bound to <see cref="MemberReferenceResolver.Kind.MissingAssembly"/>.
@@ -31,15 +31,6 @@ public static class KnownHostSkews
             + "HostedMcpServerTool.AuthorizationToken, which the loaded version no longer has. It surfaces only "
             + "when an Anthropic-routed agent is handed a hosted MCP tool; a text search finds no harness code "
             + "that constructs one. Carried follow-up: move Anthropic.SDK to a build that matches."),
-        new(
-            "Azure.AI.OpenAI",
-            "OpenAI.Responses.ResponsesClient::.ctor",
-            "Skew: Azure.AI.OpenAI 2.9.0-beta.1 constructs a ResponsesClient the loaded OpenAI package no "
-            + "longer offers. The harness AVOIDS that path rather than guarding it: it builds the Foundry "
-            + "Responses client on the OpenAI SDK directly (AgentFrameworkHelper.CreateFoundryDirectResponsesClient, "
-            + "pinned by FoundryDirectResponsesClientTests), and NoProductionCodeCallsGetResponsesClientTests "
-            + "fails if production code calls GetResponsesClient. Both go away with moving the client type off "
-            + "Azure.AI.OpenAI (#799)."),
         new(
             "HealthChecks.UI",
             "k8s.",
