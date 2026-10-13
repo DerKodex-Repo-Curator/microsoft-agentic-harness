@@ -27,6 +27,64 @@ public sealed class FileSystemToolTests
         _sut.Name.Should().Be("file_system");
     }
 
+    public static TheoryData<string> UnusableResourceParameterForms => new()
+    {
+        "omitted",
+        "null",
+        "empty",
+        "whitespace",
+        "number",
+        "boolean",
+    };
+
+    [Theory]
+    [MemberData(nameof(UnusableResourceParameterForms))]
+    public async Task ExecuteAsync_DeclaredResourceParameterMissingOrUnusable_FailsAndTouchesNothing(string form)
+    {
+        // The contract behind #825: ResourceParameterExtractor treats an omitted or null declared path as
+        // "the call did not ask for one" and returns an empty request, which path scoping passes. That is
+        // only safe while every declaring tool FAILS when the parameter is absent rather than defaulting
+        // to somewhere (the workspace root, say). This pins it for every operation and every declared key,
+        // so a new operation or a "helpful" default fails here before it becomes a scoping bypass.
+        foreach (var (operation, declared) in _sut.ResourceParametersByOperation)
+        {
+            foreach (var key in declared.Keys)
+            {
+                var parameters = new Dictionary<string, object?>
+                {
+                    // Every other required argument is valid, so only the declared resource parameter varies.
+                    ["content"] = "x",
+                    ["search_term"] = "x",
+                };
+
+                switch (form)
+                {
+                    case "null": parameters[key] = null; break;
+                    case "empty": parameters[key] = ""; break;
+                    case "whitespace": parameters[key] = "   "; break;
+                    case "number": parameters[key] = 42L; break;
+                    case "boolean": parameters[key] = true; break;
+                    // "omitted": the key is simply not added.
+                }
+
+                var result = await _sut.ExecuteAsync(operation, parameters);
+
+                result.Success.Should().BeFalse($"'{operation}' with '{key}' {form} must fail, not default");
+            }
+        }
+
+        _fileSystem.Invocations.Should().BeEmpty(
+            "a call whose resource parameter is unusable must never reach the file system service");
+    }
+
+    [Fact]
+    public void ResourceParametersByOperation_CoversEveryOperation()
+    {
+        // The test above iterates the declaration, so an operation missing from it would escape both the
+        // test and path scoping. Keep the declaration and SupportedOperations in step.
+        _sut.ResourceParametersByOperation.Keys.Should().BeEquivalentTo(_sut.SupportedOperations);
+    }
+
     [Fact]
     public void Description_IsNotEmpty()
     {

@@ -188,6 +188,14 @@ public interface ITool
     /// nothing." A profile with path/host scoping configured for a tool that declares nothing here
     /// is refused outright by <c>CapabilityEnforcer</c> — see <c>ToolCallResourceRequest</c>'s
     /// remarks — so there is no silent gap between "declared nothing" and "scoping doesn't apply."
+    /// <para>
+    /// <b>A tool that declares parameters here must fail when one of them is missing, null, blank or the
+    /// wrong type.</b> <c>ResourceParameterExtractor</c> reads an omitted or null declared parameter as
+    /// "this call did not supply it" and returns an empty request, which path/host scoping passes; a
+    /// non-string value is refused as unknown. That asymmetry is safe only if the tool never substitutes a
+    /// default (the workspace root, a wildcard host) for a missing value. Pin it with a test per tool, as
+    /// <c>FileSystemToolTests</c> does for every operation.
+    /// </para>
     /// </remarks>
     IReadOnlyDictionary<string, IReadOnlyDictionary<string, ResourceParameterKind>>? ResourceParametersByOperation => null;
 
