@@ -45,7 +45,7 @@ namespace Domain.Common.Config;
 /// // In appsettings.json:
 /// {
 ///   "AppConfig": {
-///     "Common": { "SlowThresholdSec": 5 },
+///     "Common": { "ApplicationName": "MyAgent" },
 ///     "Logging": { "LogsBasePath": "/var/logs/agent-harness" },
 ///     "Http": {
 ///       "CorsAllowedOrigins": "https://localhost:4200",
@@ -164,13 +164,6 @@ public class CommonConfig
     /// </summary>
     /// <value>Default: "1.0".</value>
     public string ApplicationVersion { get; set; } = "1.0";
-
-    /// <summary>
-    /// Gets or sets the threshold in seconds beyond which a request is considered slow.
-    /// Used by <c>RequestPerformanceBehavior</c> to log warnings for slow operations.
-    /// </summary>
-    /// <value>Default: 5 seconds.</value>
-    public int SlowThresholdSec { get; set; } = 5;
 }
 
 /// <summary>

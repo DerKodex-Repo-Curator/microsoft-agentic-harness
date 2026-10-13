@@ -49,14 +49,6 @@ public class CommonConfigTests
 
         config.ApplicationVersion.Should().Be("1.0");
     }
-
-    [Fact]
-    public void SlowThresholdSec_DefaultsToFive()
-    {
-        var config = new CommonConfig();
-
-        config.SlowThresholdSec.Should().Be(5);
-    }
 }
 
 /// <summary>
