@@ -19,16 +19,11 @@ namespace Presentation.AgentHub.Config;
 /// supplies an explicit bad value.
 /// </para>
 /// <para>
-/// Bound through <c>AddOptions&lt;AgentHubConfig&gt;().ValidateFluentValidation&lt;,&gt;().ValidateOnStart()</c>
-/// in <see cref="DependencyInjection"/>, like the other config sections in this repo. This validator lives in
-/// <c>Presentation.AgentHub</c> rather than <c>Application.Core/Validation</c> because
-/// <see cref="AgentHubConfig"/> is a presentation-layer type that Application cannot reference.
-/// </para>
-/// <para>
-/// <see cref="AgentHubConfig.SignalRMaxReceiveMessageSizeBytes"/> is additionally checked eagerly while the
-/// host's services are composed (see <c>DependencyInjection.ResolveSignalRMaxMessageSizeBytes</c>), because
-/// SignalR needs the value synchronously at registration time, before <c>ValidateOnStart()</c> fires. That
-/// eager check runs this validator's rule for that one property, so the rule exists in one place.
+/// Lives here rather than in <c>Application.Core/Validation</c> because <see cref="AgentHubConfig"/> is a
+/// presentation-layer type that Application cannot reference. It is bound in <see cref="DependencyInjection"/>.
+/// <see cref="AgentHubConfig.SignalRMaxReceiveMessageSizeBytes"/> is also checked early, while services are
+/// composed, because SignalR needs the value before <c>ValidateOnStart()</c> fires; that check runs this
+/// validator's rule for that one property so the rule exists once.
 /// </para>
 /// </remarks>
 public sealed class AgentHubConfigValidator : AbstractValidator<AgentHubConfig>
