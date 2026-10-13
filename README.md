@@ -58,7 +58,7 @@ Three commands drive everything:
 
 - **ExecuteAgentTurn** handles a single turn — one round of messages in, tool calls out, results back.
 - **RunConversation** wraps the full loop — calling ExecuteAgentTurn repeatedly until the agent says it's done.
-- **RunOrchestratedTask** is where it gets interesting — an orchestrator agent decomposes a complex task into subtasks, spins up sub-agents for each one, runs their conversations in parallel, and synthesizes the results.
+- **RunOrchestratedTask** is where it gets interesting — an orchestrator agent decomposes a complex task into subtasks, spins up sub-agents for each one, runs their conversations one after another, and synthesizes the results.
 - **RunHarnessOptimization** runs the meta-harness outer loop — proposing changes to skill files, evaluating them against a benchmark, and persisting the best candidates.
 
 ### Skills: Teaching Agents What They Know
@@ -217,9 +217,9 @@ Security is closed-by-default. Every tool declares the capabilities it needs by 
 
 ### AG-UI Protocol Events
 
-The harness streams real-time progress to the WebUI through SignalR using the AG-UI event protocol. The `AgUiEventWriter` emits strongly-typed events that the React frontend consumes for live visualization of agent activity.
+The harness streams real-time progress to the WebUI through Server-Sent Events (`POST /ag-ui/run`) using the AG-UI event protocol. The `AgUiEventWriter` emits strongly-typed events that the React frontend consumes for live visualization of agent activity.
 
-35 event types span 8 categories: **Run lifecycle** (start, finish, error, step boundaries), **Streaming** (text message deltas), **Tool calls** (start, arguments, end, result), **State** (snapshots and JSON-Patch deltas), **Escalation** (requested, resolved, expiring, executed), **Drift** (warn, alert, escalate, resolved), **Learning** (captured, applied, forgotten), and **Plan** (plan start, step start, step complete, state delta, sandbox status, plan complete, plan failed).
+41 event types span 9 categories: **Run lifecycle** (start, finish, error, step boundaries), **Streaming** (text message deltas), **Tool calls** (start, arguments, end, result), **State** (snapshots and JSON-Patch deltas), **Escalation** (requested, resolved, expiring, executed), **Drift** (warn, alert, escalate, resolved), **Learning** (captured, applied, forgotten), and **Plan** (plan start, step start, step complete, state delta, sandbox status, plan complete, plan failed), and **Magentic** (workflow started, plan, round, plan review requested, workflow completed, workflow failed).
 
 Plan events are the Phase 4 additions. When a plan starts executing, the frontend receives `PLAN_STARTED` with the full DAG structure. As each step runs, `PLAN_STEP_STARTED` and `PLAN_STEP_COMPLETED` fire with status, duration, and error details. `PLAN_STATE_DELTA` streams incremental updates for long-running steps. `SANDBOX_STATUS` reports resource usage and attestation hashes for tool execution steps. `PLAN_COMPLETED` and `PLAN_FAILED` signal terminal states.
 
@@ -404,7 +404,7 @@ src/
     ├── Presentation.Dashboard/         Operator metrics dashboard (React SPA, its own stack)
     ├── Presentation.AgentHub/          SignalR hub — real-time streaming to the WebUI
     │   ├── Auth/                       DevAuthHandler (dev bypass), Azure AD integration
-    │   └── AgUi/                       AG-UI event protocol (35 event types, SSE streaming)
+    │   └── AgUi/                       AG-UI event protocol (41 event types, SSE streaming)
     ├── Presentation.ExecutionApi/         HTTP front door for running externally-authored agent bundles
     │                                   → guide: https://mckruz.github.io/microsoft-agentic-harness/17-bundle-api.html
     │   ├── Controllers/                register → run → poll/stream → delete, owner-bound
@@ -606,7 +606,7 @@ The ConsoleUI launches an interactive [Spectre.Console](https://spectreconsole.n
 | | |
 |---|---|
 | **Runtime** | .NET 10, C# 14 |
-| **AI** | Microsoft.Agents.AI, Microsoft.Extensions.AI, Semantic Kernel |
+| **AI** | Microsoft.Agents.AI, Microsoft.Extensions.AI, OpenAI SDK |
 | **LLM Providers** | Azure OpenAI, OpenAI, Azure AI Foundry |
 | **Architecture** | Clean Architecture, CQRS (MediatR), FluentValidation |
 | **RAG** | Hybrid retrieval (dense + BM25/RRF), CRAG, RAPTOR, HyDE, RAG-Fusion, GraphRAG, multi-hop |

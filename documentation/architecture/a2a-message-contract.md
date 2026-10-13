@@ -258,7 +258,9 @@ When the evaluation's answer changes:
 
 ## Evaluation: Microsoft's preview A2A hosting
 
-Evaluated 2026-10-11 against four Microsoft packages, all
+Evaluated 2026-10-11 against three of the four Microsoft packages the canary
+pins (the fourth, `Microsoft.Agents.AI.Hosting.AGUI.AspNetCore`, is covered in
+[ag-ui-hosting-evaluation.md](ag-ui-hosting-evaluation.md)), all
 1.24.0-preview.261006.1, all built on the community `A2A` SDK
 1.0.0-preview2 (the `a2aproject` .NET SDK, not a Microsoft package):
 

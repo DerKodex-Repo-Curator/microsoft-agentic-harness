@@ -109,6 +109,8 @@ Neither guarantee crosses a machine boundary. A horizontally scaled deployment n
 
 `POST /ag-ui/run` implements the AG-UI standard for agent streaming via Server-Sent Events. The `AgUiRunHandler` orchestrates the run lifecycle: receives the run request, dispatches to the agent pipeline, and writes `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END`, `RUN_ERROR`, and `RUN_FINISHED` events to the SSE stream.
 
+The same stream also carries tool-call, plan, escalation, drift and learning events, plus six Magentic progress events (`MAGENTIC_WORKFLOW_STARTED`, `MAGENTIC_PLAN`, `MAGENTIC_ROUND`, `MAGENTIC_PLAN_REVIEW_REQUESTED`, `MAGENTIC_WORKFLOW_COMPLETED`, `MAGENTIC_WORKFLOW_FAILED`). The Magentic events are emitted by `Magentic/AgUiMagenticProgressNotifier`, which writes to the active run's `IAgUiEventWriterAccessor` and skips silently when no AG-UI run is active.
+
 ### Authentication
 
 Two modes, controlled by `Auth:Disabled` in configuration:
@@ -141,9 +143,15 @@ Presentation.AgentHub/
 │   ├── AgUiEndpoints.cs              POST /ag-ui/run endpoint registration
 │   ├── AgUiRunHandler.cs             SSE run orchestration
 │   ├── AgUiEventWriter.cs            SSE event serialization
-│   ├── AgUiEvents.cs                 AG-UI event type definitions
-│   ├── AgUiEventType.cs              Event type enum
+│   ├── AgUiEvents.cs                 AgUiEvent base record
+│   ├── AgUiEventType.cs              Event type constants
+│   ├── AgUiRunEvents.cs              Per-family event records (also AgUiToolCallEvents,
+│   │                                 AgUiPlanEvents, AgUiEscalationEvents, AgUiDriftEvents,
+│   │                                 AgUiLearningEvents)
+│   ├── AgUiMagenticEvents.cs         Magentic progress event records
 │   └── AgUiModels.cs                 Request/response models
+├── Magentic/
+│   └── AgUiMagenticProgressNotifier.cs   Streams Magentic progress as AG-UI events
 ├── Auth/
 │   └── DevAuthHandler.cs             Development auth bypass
 ├── Config/
@@ -257,8 +265,8 @@ dotnet run --project src/Content/Presentation/Presentation.AgentHub
 
 ### Adding a New AG-UI Event Type
 
-1. Add the event class in `AgUi/AgUiEvents.cs`
-2. Add the type to `AgUiEventType` enum
+1. Add the event record, deriving from `AgUiEvent`, in the matching per-family file (for example `AgUi/AgUiPlanEvents.cs`)
+2. Add a `const string` for the type to the `AgUiEventType` static class
 3. Emit it in `AgUiRunHandler` at the appropriate lifecycle point
 4. Serialize via `AgUiEventWriter.WriteEvent()`
 

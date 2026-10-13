@@ -1358,8 +1358,8 @@
 <span class="code-line">    <span class="code-keyword">new</span> SkillAgentOptions { AdditionalContext = <span class="code-function">BuildAgentCatalogPrompt</span>(request.AvailableAgents) },</span>
 <span class="code-line">    cancellationToken);</span>
 <span class="code-line"></span>
-<span class="code-line"><span class="code-keyword">var</span> planResponse = <span class="code-keyword">await</span> orchestrator.<span class="code-function">RunAsync</span>(planMessages, cancellationToken: cancellationToken);</span>
-<span class="code-line"><span class="code-keyword">var</span> subtasks = <span class="code-function">ParseSubtasks</span>(<span class="code-function">ExtractResponseText</span>(planResponse), request.AvailableAgents);</span>
+<span class="code-line"><span class="code-keyword">var</span> plan = <span class="code-keyword">await</span> <span class="code-function">PlanAsync</span>(orchestrator, planMessages, request.AvailableAgents, cancellationToken);</span>
+<span class="code-line"><span class="code-keyword">var</span> subtasks = plan.Subtasks; <span class="code-comment">// plan.Error set =&gt; task fails with a stable code</span></span>
 <span class="code-line"></span>
 <span class="code-line"><span class="code-comment">// Phase 2: Run sub-agents sequentially, sharing one budget</span></span>
 <span class="code-line"><span class="code-keyword">foreach</span> (<span class="code-keyword">var</span> (agentName, subtask) <span class="code-keyword">in</span> subtasks)</span>
@@ -1388,7 +1388,7 @@
           <p class="tl">&nbsp;</p>
           <p class="tl">&nbsp;</p>
           <p class="tl">&nbsp;</p>
-          <p class="tl">Ask the orchestrator to produce a plan. Parse its response into a list of (agent name, subtask) pairs.</p>
+          <p class="tl">Ask the orchestrator for its plan as typed JSON: a list of (agent, subtask) pairs. An unreadable, empty, or unknown-agent plan fails the task.</p>
           <p class="tl">&nbsp;</p>
           <p class="tl">&nbsp;</p>
           <p class="tl">Phase 2: Run each sub-agent <strong>sequentially</strong>, not in parallel.</p>

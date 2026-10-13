@@ -39,10 +39,12 @@ GitHub Pages sites (deployed by `.github/workflows/pages.yml`):
 
 | Path | Deployed at | Covers |
 | --- | --- | --- |
-| `documentation/onboarding/` | `/` | Developer guide, chapters 00–15. The how-to-extend reference. |
+| `documentation/onboarding/` | `/` | Developer guide, chapters 01–18 plus `index.html`. The how-to-extend reference. |
 | `documentation/architecture/` | `/architecture/` | **Target** Azure deployment topology, cost, ops. Aspirational by design. |
+| `documentation/security/` | `/security/` | Threat model, governance, sandbox, egress/SSRF, content safety, OWASP Agentic evals. |
 | `documentation/agentic-harness-course/` | `/agentic-harness-course/` | Conceptual course for non-technical readers. |
 | `documentation/reference/` | `/reference/` | Patterns & technologies catalogue. |
+| `documentation/showcase/` | `/showcase/` | Interactive architecture showcase. |
 
 Onboarding chapter → subsystem:
 
@@ -60,6 +62,9 @@ Onboarding chapter → subsystem:
 | `13-evaluation` | eval harness, metrics, reporters, `eval-suite.yml` |
 | `14-skill-training` | SkillOpt port (`Application.AI.Common/.../SkillTraining`) |
 | `15-delivery-governance` | the delivery rails: `ci.yml`, `grader.yml`, `security-review.yml`, `docs-drift-check.yml`, `RAILS.md`, branch protection, CODEOWNERS |
+| `16-generative-ui` | generative UI / client widgets |
+| `17-bundle-api` | Execution API (bundles, workflows, tool discovery); OpenAPI spec in `assets/openapi/bundle-api.yaml` |
+| `18-self-hosted-docker` | self-hosted Docker deployment |
 | `12-reference` | cheatsheet & glossary |
 
 Non-Pages docs that may also need syncing: `documentation/design/`,
@@ -81,7 +86,7 @@ These are hand-authored static HTML pages, no templating. To keep edits invisibl
   blocks. Don't introduce new components or CSS.
 - **Nav is hand-coded per page and must stay identical across all sibling pages.** If you
   add or rename a chapter, update the `sidebar-nav` block in **every** onboarding page
-  (00–15). Three nav formats exist (fully-compact one-line, semi-expanded, fully-expanded);
+  (01–18). Three nav formats exist (fully-compact one-line, semi-expanded, fully-expanded);
   match whichever the file already uses.
 - **Cross-link with the right relative base.** Onboarding deploys to the site root, so
   onboarding→onboarding links are bare (`15-delivery-governance.html`). The reference and

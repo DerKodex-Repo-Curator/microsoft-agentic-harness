@@ -235,11 +235,11 @@
           resources: { cpu: json('1.0'), memory: '2Gi' }
           env: [
             {
-              name: 'AI__AgentFramework__AzureOpenAI__Endpoint'
+              name: 'AppConfig__AI__AgentFramework__Endpoint'
               value: openAiEndpoint
             }
             {
-              name: 'AI__AgentFramework__AzureOpenAI__ApiKey'
+              name: 'AppConfig__AI__AgentFramework__ApiKey'
               secretRef: 'openai-key'
             }
           ]
@@ -300,7 +300,7 @@
                                 <td><code>AzureOpenAI</code></td>
                                 <td>Your Azure OpenAI resource URL</td>
                                 <td><code>DefaultDeployment</code> is the deployment name from Azure AI Foundry, not
-                                    the model name. Supports managed identity.</td>
+                                    the model name. API-key authenticated: the key is sent as a bearer credential to the resource's <code>/openai/v1/</code> route.</td>
                             </tr>
                             <tr>
                                 <td>OpenAI (direct)</td>
@@ -420,7 +420,7 @@
                             </tr>
                             <tr>
                                 <td><code>AI:AgentFramework:ApiKey</code></td>
-                                <td>Provider API key (or managed identity for Azure OpenAI)</td>
+                                <td>Provider API key</td>
                                 <td>Authentication</td>
                             </tr>
                             <tr>
@@ -480,12 +480,12 @@
                     <div class="callout callout-info">
                         <span class="callout-icon">i</span>
                         <div class="callout-body">
-                            <div class="callout-title">Prefer managed identity</div>
+                            <div class="callout-title">Keep the Azure OpenAI key in Key Vault</div>
                             <p style="margin: 0">
-                                For Azure OpenAI in production, managed identity beats API keys. Set
-                                <code>AI:AgentFramework:UseManagedIdentity: true</code> and assign the
-                                <strong>Cognitive Services OpenAI User</strong> role to your Container App's managed
-                                identity. The <code>ApiKey</code> field can then be left empty.
+                                The <code>AzureOpenAI</code> client type authenticates with an API key, and a blank key
+                                fails at startup. Store the key in Key Vault and reference it from the Container App
+                                rather than embedding it. Managed identity (Entra) is available on the Foundry client
+                                types, not on <code>AzureOpenAI</code>.
                             </p>
                         </div>
                     </div>
