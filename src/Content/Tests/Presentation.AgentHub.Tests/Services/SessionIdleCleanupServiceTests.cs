@@ -52,6 +52,21 @@ public sealed class SessionIdleCleanupServiceTests
     }
 
     [Fact]
+    public async Task RunTickAsync_TimeoutCancellationNotFromShutdown_IsContained()
+    {
+        // A store or HTTP timeout surfaces as TaskCanceledException while the host token is NOT
+        // cancelled. ExecuteAsync only swallows cancellation when its own token is cancelled, so
+        // letting this one escape would stop the host — the crash RunTickAsync exists to prevent.
+        var monitor = new Mock<IOptionsMonitor<AgentHubConfig>>();
+        monitor.SetupGet(m => m.CurrentValue).Throws(new TaskCanceledException("store timeout"));
+        var sut = CreateSut(monitor.Object);
+
+        var act = () => sut.RunTickAsync(CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
     public async Task RunTickAsync_Cancelled_StillPropagatesCancellation()
     {
         // Containment must not swallow shutdown: ExecuteAsync relies on OperationCanceledException.

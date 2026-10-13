@@ -95,6 +95,20 @@ public sealed class AgentHubConfigValidatorTests
     }
 
     [Fact]
+    public void AddAgentHubServices_InvalidSection_FailsHostStartupValidation()
+    {
+        // Resolving IOptions validates lazily whether or not ValidateOnStart is present, so the theory
+        // above cannot tell the two apart. IStartupValidator is what the host runs before serving:
+        // delete ValidateOnStart() in DependencyInjection and this test goes red.
+        using var provider = AgentHubTestServiceProviderFactory.Build(
+            new Dictionary<string, string?> { ["AppConfig:AgentHub:MaxHistoryMessages"] = "0" });
+
+        var act = () => provider.GetRequiredService<IStartupValidator>().Validate();
+
+        act.Should().Throw<Exception>().WithMessage("*MaxHistoryMessages*");
+    }
+
+    [Fact]
     public void AddAgentHubServices_OmittedSection_ResolvesValidDefaults()
     {
         using var provider = AgentHubTestServiceProviderFactory.Build();

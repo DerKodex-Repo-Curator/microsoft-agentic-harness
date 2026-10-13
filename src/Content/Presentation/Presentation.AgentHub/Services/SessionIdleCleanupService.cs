@@ -54,12 +54,19 @@ internal sealed class SessionIdleCleanupService : BackgroundService
     /// Runs one cleanup pass, containing any failure so a single bad tick cannot stop the host.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// An exception escaping <see cref="ExecuteAsync"/> triggers the default
     /// <c>BackgroundServiceExceptionBehavior.StopHost</c>. The realistic trigger is a hot-reloaded
     /// <c>AppConfig:AgentHub</c> value that fails <see cref="AgentHubConfigValidator"/>: the options
-    /// monitor then throws <see cref="OptionsValidationException"/> from <c>CurrentValue</c>. The failed
-    /// pass is logged and retried on the next tick, once the configuration is corrected. Cancellation is
-    /// not contained — it is how shutdown reaches the loop.
+    /// monitor then throws <see cref="OptionsValidationException"/> from <c>CurrentValue</c>. A failed pass
+    /// is logged, and sessions it had not yet processed are picked up on the next tick. A session whose
+    /// end-of-session write itself failed was already untracked, so it is not retried.
+    /// </para>
+    /// <para>
+    /// Only cancellation requested through <paramref name="ct"/> is let through, because that is how
+    /// shutdown reaches the loop. A timeout-driven <see cref="OperationCanceledException"/> from the store
+    /// is an ordinary failure and is contained like any other.
+    /// </para>
     /// </remarks>
     internal async Task RunTickAsync(CancellationToken ct)
     {
@@ -67,9 +74,10 @@ internal sealed class SessionIdleCleanupService : BackgroundService
         {
             await CleanupIdleSessionsAsync(ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            _logger.LogError(ex, "Idle session cleanup failed; it will be retried on the next tick.");
+            _logger.LogError(
+                ex, "Idle session cleanup failed; sessions not yet processed are retried on the next tick.");
         }
     }
 
@@ -111,7 +119,7 @@ internal sealed class SessionIdleCleanupService : BackgroundService
 
             _logger.LogInformation(
                 "Idle timeout: ended session {SessionId} for agent {AgentName} after {IdleMinutes}m idle.",
-                info.ObservabilitySessionId, info.AgentName, _config.CurrentValue.SessionIdleTimeoutMinutes);
+                info.ObservabilitySessionId, info.AgentName, timeout.TotalMinutes);
         }
     }
 }
