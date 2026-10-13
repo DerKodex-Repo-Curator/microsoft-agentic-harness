@@ -14,7 +14,8 @@ public class AgentsConfig
     /// <summary>
     /// Primary path to search for <c>AGENT.md</c> files. May point to a single agent folder
     /// or a parent folder containing multiple agent subdirectories. Relative paths are resolved
-    /// from the application's working directory.
+    /// from the application's base directory (<c>AppContext.BaseDirectory</c>, the bin folder), not the
+    /// process working directory.
     /// </summary>
     public string? BasePath { get; set; }
 

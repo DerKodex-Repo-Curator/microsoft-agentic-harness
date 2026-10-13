@@ -13,6 +13,14 @@ namespace Infrastructure.AI.Agents;
 /// <see cref="BackgroundServices.AgentManifestWatcherService"/> computes the same set of
 /// watch roots the registry scans, rather than two independent implementations of "which
 /// folders" silently drifting apart.
+/// <para>
+/// <b>Deliberately a plain <see cref="Directory.Exists(string?)"/>, unlike
+/// <c>SkillSearchPathResolver</c>, which asks the sandboxed <c>ISkillFileReader</c> (#710).</b> The
+/// reader's sandbox is built from <c>SkillContentRoots</c>, which already includes the agent roots, so
+/// a configured root always passes its own sandbox: routing this check through it would never refuse
+/// anything, and would add new ways for the registry and watcher to throw. The containment that
+/// matters is the directory walk and the <c>AGENT.md</c> read, which are not yet sandboxed (#822).
+/// </para>
 /// </remarks>
 internal static class AgentSearchPathResolver
 {
