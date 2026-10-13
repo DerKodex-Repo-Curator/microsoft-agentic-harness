@@ -1,24 +1,12 @@
-using System.Text.Json;
-using Application.AI.Common.Interfaces;
-using Application.AI.Common.Interfaces.Agent;
 using Application.AI.Common.Interfaces.Escalation;
 using Application.AI.Common.Interfaces.Governance;
-using Application.AI.Common.Interfaces.Telemetry;
 using Application.AI.Common.Interfaces.Tools;
-using Application.AI.Common.Services.Agent;
 using Application.AI.Common.Services.Governance;
 using Application.AI.Common.Services.Tools;
-using Application.AI.Common.Tests.Governance;
 using Domain.AI.Bundles;
-using Domain.AI.Governance;
-using Domain.Common.Config.AI.DirectToolInvocation;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
-using Xunit;
 
 namespace Application.AI.Common.Tests.Services.Tools;
 
@@ -45,22 +33,13 @@ namespace Application.AI.Common.Tests.Services.Tools;
 /// </list>
 /// <para>
 /// The container is assembled the way <see cref="DirectToolInvokerTests"/> assembles it (real admission
-/// chain, test-double governor, sanitizer and reporter) rather than extracted into a shared fixture, so
-/// that suite stays untouched; a later change could fold the two registrations into one helper.
+/// chain, test-double governor and reporter) and lives in the <c>Fixture</c> partial. It is deliberately
+/// not shared with that suite yet, so that suite stays untouched; the two copies of the gate registration
+/// should be folded into one helper in a follow-up, or a new required gate will break only one of them.
 /// </para>
 /// </remarks>
-public sealed class DirectToolInvokerMcpTests
+public sealed partial class DirectToolInvokerMcpTests
 {
-    private const string Caller = "caller-1";
-    private const string Server = "srv";
-    private const string ToolName = "echo";
-    private const string McpReportedBy = "direct-invocation-mcp";
-
-    private readonly GovernorRecord _governor = new();
-    private readonly DirectToolInvocationConfig _config = new() { McpEnabled = true };
-    private readonly Mock<IApprovalExecutionReporter> _reporter = new();
-    private readonly Mock<IMcpToolProvider> _provider = new();
-
     // ---- execution reporting (the surface-attribution property) ------------------------------------
 
     [Fact]
@@ -111,6 +90,29 @@ public sealed class DirectToolInvokerMcpTests
         outcome.Status.Should().Be(DirectToolInvocationStatus.Faulted);
         _reporter.Verify(r => r.ReportFailedAsync(
             call, It.IsAny<PreparedFailureText>(), McpReportedBy, CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task ADeniedCall_NeverRunsTheTool_AndReportsNothing()
+    {
+        // A refusal must not write an execution record for a call that never executed.
+        _governor.Decision = ToolInvocationDecision.Deny("not permitted");
+        var executions = 0;
+        var function = Function(_ =>
+        {
+            executions++;
+            return Task.FromResult<object?>("ok");
+        });
+
+        var outcome = await Invoke(Request(), function);
+
+        outcome.Status.Should().Be(DirectToolInvocationStatus.Denied);
+        executions.Should().Be(0);
+        _reporter.Verify(r => r.ReportSucceededAsync(
+            It.IsAny<ApprovedCall>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _reporter.Verify(r => r.ReportFailedAsync(
+            It.IsAny<ApprovedCall>(), It.IsAny<PreparedFailureText>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     // ---- cancellation and deadlines ------------------------------------------------------------------
@@ -190,7 +192,7 @@ public sealed class DirectToolInvokerMcpTests
         var outcome = await Invoke(Request(), Function());
 
         outcome.Status.Should().Be(DirectToolInvocationStatus.Disabled);
-        _provider.Verify(p => p.GetToolsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        AssertNoServerContacted();
     }
 
     [Fact]
@@ -201,25 +203,45 @@ public sealed class DirectToolInvokerMcpTests
         var outcome = await Invoke(Request(envelope), Function());
 
         outcome.Status.Should().Be(DirectToolInvocationStatus.NotFound);
-        _provider.Verify(p => p.GetToolsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        AssertNoServerContacted();
     }
 
     [Fact]
-    public async Task AServerTheEnvelopeDoesNotGrant_IsNeverContacted()
+    public async Task ABlankToolName_IsRejectedAsInvalid_BeforeAnyServerIsContacted()
+    {
+        var outcome = await Invoke(Request() with { ToolName = "  " }, Function());
+
+        outcome.Status.Should().Be(DirectToolInvocationStatus.Invalid);
+        AssertNoServerContacted();
+    }
+
+    [Fact]
+    public async Task WithNoMcpProviderOnTheHost_AGrantedToolIsReportedAsAbsent()
+    {
+        var outcome = await InvokeWithProvider(Request(), withProvider: false);
+
+        outcome.Status.Should().Be(DirectToolInvocationStatus.NotFound);
+    }
+
+    [Fact]
+    public async Task AServerTheEnvelopeDoesNotGrant_IsNeverContacted_ByAnyLookupMethod()
     {
         // An ungranted server must cost the caller a NotFound, not a side-effect connection or a schema
-        // disclosure — the SSRF-safe property the resolver exists to keep.
+        // disclosure. GetToolByNameAsync and GetAllToolsAsync search every configured server regardless of
+        // grant, so they are checked as well: an unconfigured loose mock answers them with null, which
+        // would otherwise let a widening to either one pass unnoticed.
         var envelope = new CapabilityEnvelope { AllowedTools = [ToolName], AllowedMcpServers = ["granted-only"] };
-        var function = Function();
         _provider.Setup(p => p.GetToolsAsync("granted-only", It.IsAny<CancellationToken>()))
             .ReturnsAsync((IList<AITool>)new List<AITool>());
         _provider.Setup(p => p.GetToolsAsync(Server, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IList<AITool>)new List<AITool> { function });
+            .ReturnsAsync((IList<AITool>)new List<AITool> { Function() });
 
         var outcome = await InvokeWithProvider(Request(envelope));
 
         outcome.Status.Should().Be(DirectToolInvocationStatus.NotFound);
         _provider.Verify(p => p.GetToolsAsync(Server, It.IsAny<CancellationToken>()), Times.Never);
+        _provider.Verify(p => p.GetAllToolsAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _provider.Verify(p => p.GetToolByNameAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -277,7 +299,7 @@ public sealed class DirectToolInvokerMcpTests
         outcome.Status.Should().Be(DirectToolInvocationStatus.Invalid);
     }
 
-    // ---- governance arming ------------------------------------------------------------------------------
+    // ---- governance arming and output shaping ---------------------------------------------------------
 
     [Fact]
     public async Task ArmsTheCallersEnvelope_AroundTheToolCall()
@@ -309,23 +331,6 @@ public sealed class DirectToolInvokerMcpTests
     }
 
     [Fact]
-    public async Task ADeniedCall_NeverRunsTheTool()
-    {
-        _governor.Decision = ToolInvocationDecision.Deny("not permitted");
-        var executions = 0;
-        var function = Function(_ =>
-        {
-            executions++;
-            return Task.FromResult<object?>("ok");
-        });
-
-        var outcome = await Invoke(Request(), function);
-
-        outcome.Status.Should().Be(DirectToolInvocationStatus.Denied);
-        executions.Should().Be(0);
-    }
-
-    [Fact]
     public async Task AToolThatSucceeds_ReturnsItsOutput()
     {
         // The companion to the refusal tests: each would also pass against an invoker that refused everything.
@@ -335,125 +340,15 @@ public sealed class DirectToolInvokerMcpTests
         outcome.Output.Should().Contain("hello");
     }
 
-    // ---- fixture ------------------------------------------------------------------------------------------
-
-    private static ApprovedCall ApprovedCall() =>
-        new(Guid.NewGuid(), new ApprovalFailureKey("conv-1", Caller, ToolName));
-
-    private static JsonElement IsErrorResult(string text) =>
-        JsonDocument.Parse(
-                $$"""{"isError":true,"content":[{"type":"text","text":"{{text}}"}]}""")
-            .RootElement.Clone();
-
-    private static DirectMcpToolInvocationRequest Request(CapabilityEnvelope? envelope = null) =>
-        new()
-        {
-            ToolName = ToolName,
-            OwnerId = Caller,
-            Envelope = envelope ?? new CapabilityEnvelope { AllowedTools = [ToolName], AllowedMcpServers = [Server] },
-        };
-
-    /// <summary>An MCP-published function whose body the test dictates; defaults to returning "ok".</summary>
-    private static AIFunction Function(Func<CancellationToken, Task<object?>>? body = null) =>
-        AIFunctionFactory.Create(
-            async (CancellationToken ct) => await (body?.Invoke(ct) ?? Task.FromResult<object?>("ok")),
-            ToolName,
-            "MCP-published fake");
-
-    private Task<DirectToolInvocationOutcome> Invoke(
-        DirectMcpToolInvocationRequest request, AIFunction function, CancellationToken cancellationToken = default)
+    [Fact]
+    public async Task OutputBeyondTheCeiling_IsTruncated_WithTheMarkerCountedAgainstIt()
     {
-        _provider.Setup(p => p.GetToolsAsync(Server, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IList<AITool>)new List<AITool> { function });
+        _config.MaxOutputCharacters = 40;
 
-        return InvokeWithProvider(request, cancellationToken);
-    }
+        var outcome = await Invoke(
+            Request(), Function(_ => Task.FromResult<object?>(new string('x', 500))));
 
-    /// <summary>
-    /// Builds the invoker over a real container so the scope, the scoped execution context and the
-    /// admission chain are the production ones, then runs the request. The provider's setups are the
-    /// caller's responsibility, so a test can describe several servers.
-    /// </summary>
-    private async Task<DirectToolInvocationOutcome> InvokeWithProvider(
-        DirectMcpToolInvocationRequest request, CancellationToken cancellationToken = default)
-    {
-        var services = new ServiceCollection();
-        services.AddScoped<IAgentExecutionContext, AgentExecutionContext>();
-        services.AddScoped<IToolInvocationGovernor>(sp =>
-            new RecordingGovernor(sp.GetRequiredService<IAgentExecutionContext>(), _governor));
-
-        // Every gate is registered unconditionally: the chain requires all of them, and an absent gate
-        // and a permissive one must never be confusable at runtime.
-        services.AddSingleton(AdmissionHarness.PermissiveClassificationGate());
-        services.AddSingleton<IToolCallObserverChain>(new NoObservers());
-        services.AddSingleton(AdmissionHarness.PermissiveProgressEvaluator());
-        services.AddSingleton<IGovernanceTraceRecorder>(AdmissionHarness.TraceRecorder());
-        services.AddSingleton(AdmissionHarness.PermissiveAuthorizationGate());
-        services.AddSingleton(_reporter.Object);
-        services.AddSingleton<ICompositeResponseSanitizer>(new PassThroughSanitizer());
-        services.AddSingleton<IContentRedactionFilter>(TestRedactionFilter.Instance);
-        services.AddSingleton<IOptionsMonitor<Domain.Common.Config.AppConfig>>(
-            new StaticOptionsMonitor<Domain.Common.Config.AppConfig>(new Domain.Common.Config.AppConfig()));
-        services.AddSingleton(AdmissionHarness.StubResultStore());
-        services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(NullLogger<>));
-        services.AddToolCallAdmissionChain();
-
-        var provider = services.BuildServiceProvider();
-
-        var sut = new DirectToolInvoker(
-            provider.GetRequiredService<IServiceScopeFactory>(),
-            new ToolCatalog(provider, [], NullLogger<ToolCatalog>.Instance),
-            new StaticOptionsMonitor<DirectToolInvocationConfig>(_config),
-            NullLogger<DirectToolInvoker>.Instance,
-            _provider.Object);
-
-        return await sut.InvokeMcpToolAsync(request, cancellationToken);
-    }
-
-    private sealed class GovernorRecord
-    {
-        public ToolInvocationDecision Decision { get; set; } = ToolInvocationDecision.Allow();
-        public string? AgentIdWhenAuthorizing { get; set; }
-        public TimeSpan Delay { get; set; }
-    }
-
-    private sealed class RecordingGovernor(IAgentExecutionContext executionContext, GovernorRecord record)
-        : IToolInvocationGovernor
-    {
-        public async ValueTask<ToolInvocationDecision> AuthorizeAsync(
-            string toolName, CancellationToken cancellationToken,
-            IReadOnlyDictionary<string, object?>? arguments = null,
-            ToolCompositionTaint? composition = null,
-            Domain.AI.Sandbox.ToolCallResourceRequest? resourceRequest = null)
-        {
-            record.AgentIdWhenAuthorizing = executionContext.AgentId;
-
-            if (record.Delay > TimeSpan.Zero)
-                await Task.Delay(record.Delay, cancellationToken);
-
-            return record.Decision;
-        }
-    }
-
-    private sealed class NoObservers : IToolCallObserverChain
-    {
-        public bool HasObservers => false;
-
-        public ValueTask<ToolInvocationDecision> EvaluateAsync(
-            string toolName, IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(ToolInvocationDecision.Allow());
-    }
-
-    private sealed class PassThroughSanitizer : ICompositeResponseSanitizer
-    {
-        public SanitizationResult Sanitize(string content, string? toolName = null) =>
-            SanitizationResult.Clean(content);
-    }
-
-    private sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
-    {
-        public T CurrentValue => value;
-        public T Get(string? name) => value;
-        public IDisposable? OnChange(Action<T, string?> listener) => null;
+        outcome.Output!.Length.Should().BeLessThanOrEqualTo(40);
+        outcome.OutputTruncated.Should().BeTrue();
     }
 }
