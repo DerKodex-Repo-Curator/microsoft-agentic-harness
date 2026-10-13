@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Infrastructure.AI.Agents;
 using Microsoft.Extensions.Logging.Abstractions;
+using Tests.Common;
 using Xunit;
 
 namespace Infrastructure.AI.Tests.Agents;
@@ -35,7 +36,7 @@ public sealed class AgentMetadataParserTests : IDisposable
     }
 
     private static AgentMetadataParser CreateParser() =>
-        new(NullLogger<AgentMetadataParser>.Instance, TestMcpSecurityScanner.AlwaysSafe(), TestMcpSecurityScanner.DefaultConfig());
+        new(NullLogger<AgentMetadataParser>.Instance, new UnsandboxedSkillFileReader(), TestMcpSecurityScanner.AlwaysSafe(), TestMcpSecurityScanner.DefaultConfig());
 
     [Fact]
     public void ParseFromFile_WithAllFrontmatterFields_PopulatesDefinition()

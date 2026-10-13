@@ -1,3 +1,4 @@
+using Application.AI.Common.Exceptions;
 using Application.AI.Common.Interfaces;
 using Application.AI.Common.Interfaces.Skills;
 using Domain.AI.Agents;
@@ -21,6 +22,14 @@ namespace Infrastructure.AI.Agents;
 /// Also implements <see cref="IAgentRegistryRefresher"/> (issue #705): the cache can be invalidated
 /// or eagerly rebuilt after the initial load, by <c>AgentManifestWatcherService</c>
 /// reacting to filesystem changes or by an operator-triggered refresh command.
+/// <para>
+/// <b>The walk and the manifest read are sandboxed (#822).</b> Directory enumeration, the
+/// <c>AGENT.md</c> probe and the manifest read all go through <see cref="ISkillFileReader"/>, which
+/// re-validates every subdirectory it returns and caps the size of a read, so a link planted inside a
+/// root cannot lead discovery to an <c>AGENT.md</c> elsewhere on disk. The configured roots themselves
+/// are checked with a plain <c>Directory.Exists</c> in <c>AgentSearchPathResolver</c>: the reader's
+/// sandbox already includes the agent roots, so that check could never refuse one.
+/// </para>
 /// </remarks>
 public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegistryRefresher
 {
@@ -160,7 +169,7 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
             {
                 RebuildAndReconcile();
             }
-            catch (Exception ex) when (_cache is not null)
+            catch (Exception ex) when (ex is not SkillPathRefusedException && _cache is not null)
             {
                 // A rebuild failure must not strand a previously-successful load (code review on
                 // issue #705): before Invalidate() existed, once _cache was populated it was never
@@ -169,6 +178,10 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
                 // every subsequent call re-enters this branch, retries, fails, and re-throws, forever
                 // discarding perfectly good data still sitting in _cache. Serve the last known set
                 // instead; _stale stays true so the next Invalidate/Refresh still retries.
+                //
+                // SkillPathRefusedException is EXCLUDED, as SkillMetadataRegistry excludes it: a sandbox
+                // refusal is a boundary violation (a path in the walk resolved outside the skill content
+                // roots), and quietly serving stale data would absorb exactly what should be loud.
                 _logger.LogError(ex,
                     "Agent registry rebuild failed — continuing to serve the last known agent set");
                 return _cache;
@@ -327,7 +340,23 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
 
         var agentFile = Path.Combine(directory, "AGENT.md");
 
-        if (File.Exists(agentFile))
+        bool hasManifest;
+        try
+        {
+            hasManifest = _skillFileReader.FileExists(agentFile);
+        }
+        catch (ArgumentException ex)
+        {
+            // The sandbox's input validation rejects a path carrying traversal sequences or shell
+            // metacharacters (a folder named "R&D"). That is one unusable directory, not a reason to end
+            // discovery of every other root, so it is skipped. It is also an INCOMPLETE scan: whatever
+            // was registered under it last time must not be reclassified as deleted.
+            _logger.LogWarning(ex, "Skipping agent directory the sandbox cannot validate: {Path}", directory);
+            hadEnumerationErrors = true;
+            return;
+        }
+
+        if (hasManifest)
         {
             try
             {
@@ -351,8 +380,10 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not SkillPathRefusedException)
             {
+                // A malformed or oversize manifest is skipped; a sandbox REFUSAL is not. Absorbing it
+                // would report "no agent here", indistinguishable from a directory that holds none.
                 _logger.LogWarning(ex, "Failed to parse agent from {Path}", agentFile);
             }
 
@@ -362,10 +393,13 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
 
         try
         {
-            foreach (var subDir in Directory.EnumerateDirectories(directory))
+            // Through the reader, which re-validates every subdirectory it returns: a junction planted
+            // inside a root enumerates with a legitimate-looking literal path, and walking into it would
+            // register whatever AGENT.md it points at.
+            foreach (var subDir in _skillFileReader.EnumerateDirectories(directory))
                 DiscoverInDirectory(subDir, depth + 1, result, ref hadEnumerationErrors);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not SkillPathRefusedException)
         {
             _logger.LogWarning(ex, "Could not enumerate directory: {Path}", directory);
             hadEnumerationErrors = true;

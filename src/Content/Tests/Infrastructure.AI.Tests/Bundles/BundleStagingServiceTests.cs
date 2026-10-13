@@ -746,7 +746,8 @@ public sealed class BundleStagingServiceTests : IDisposable
         new(
             new OptionsMonitorStub(appConfig),
             new AgentMetadataParser(
-                NullLogger<AgentMetadataParser>.Instance, agentScanner ?? TestMcpSecurityScanner.AlwaysSafe(),
+                NullLogger<AgentMetadataParser>.Instance, new UnsandboxedSkillFileReader(),
+                agentScanner ?? TestMcpSecurityScanner.AlwaysSafe(),
                 Mock.Of<IOptionsMonitor<AIConfig>>(m => m.CurrentValue == appConfig.AI)),
             new SkillMetadataParser(
                 NullLogger<SkillMetadataParser>.Instance, new UnsandboxedSkillFileReader(),

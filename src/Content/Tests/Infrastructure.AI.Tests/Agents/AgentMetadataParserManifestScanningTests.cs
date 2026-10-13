@@ -6,6 +6,7 @@ using Infrastructure.AI.Agents;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
+using Tests.Common;
 using Xunit;
 
 namespace Infrastructure.AI.Tests.Agents;
@@ -70,7 +71,7 @@ public sealed class AgentMetadataParserManifestScanningTests : IDisposable
     {
         var path = WriteAgent(AgentBody);
         var parser = new AgentMetadataParser(
-            NullLogger<AgentMetadataParser>.Instance, WithheldScanner().Object, ConfigWithSecurityEnabled());
+            NullLogger<AgentMetadataParser>.Instance, new UnsandboxedSkillFileReader(), WithheldScanner().Object, ConfigWithSecurityEnabled());
 
         var ex = Assert.Throws<ManifestRefusedException>(() => parser.ParseFromFile(path, _tempDir));
 
@@ -83,7 +84,7 @@ public sealed class AgentMetadataParserManifestScanningTests : IDisposable
     {
         var path = WriteAgent(AgentBody);
         var parser = new AgentMetadataParser(
-            NullLogger<AgentMetadataParser>.Instance, WithheldScanner().Object, ConfigWithSecurityEnabled());
+            NullLogger<AgentMetadataParser>.Instance, new UnsandboxedSkillFileReader(), WithheldScanner().Object, ConfigWithSecurityEnabled());
 
         var ex = Assert.Throws<ManifestRefusedException>(() => parser.ParseFromFile(path, _tempDir));
 
@@ -96,7 +97,7 @@ public sealed class AgentMetadataParserManifestScanningTests : IDisposable
     {
         var path = WriteAgent(AgentBody);
         var parser = new AgentMetadataParser(
-            NullLogger<AgentMetadataParser>.Instance, TestMcpSecurityScanner.AlwaysSafe(), ConfigWithSecurityEnabled());
+            NullLogger<AgentMetadataParser>.Instance, new UnsandboxedSkillFileReader(), TestMcpSecurityScanner.AlwaysSafe(), ConfigWithSecurityEnabled());
 
         var agent = parser.ParseFromFile(path, _tempDir);
 
@@ -111,7 +112,7 @@ public sealed class AgentMetadataParserManifestScanningTests : IDisposable
         var disabledConfig = Mock.Of<IOptionsMonitor<AIConfig>>(m =>
             m.CurrentValue == new AIConfig { Governance = new GovernanceConfig { EnableMcpSecurity = false } });
 
-        var parser = new AgentMetadataParser(NullLogger<AgentMetadataParser>.Instance, mock.Object, disabledConfig);
+        var parser = new AgentMetadataParser(NullLogger<AgentMetadataParser>.Instance, new UnsandboxedSkillFileReader(), mock.Object, disabledConfig);
 
         var agent = parser.ParseFromFile(path, _tempDir);
 

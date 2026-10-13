@@ -19,7 +19,8 @@ namespace Infrastructure.AI.Agents;
 /// reader's sandbox is built from <c>SkillContentRoots</c>, which already includes the agent roots, so
 /// a configured root always passes its own sandbox: routing this check through it would never refuse
 /// anything, and would add new ways for the registry and watcher to throw. The containment that
-/// matters is the directory walk and the <c>AGENT.md</c> read, which are not yet sandboxed (#822).
+/// matters is the directory walk and the <c>AGENT.md</c> read, which <c>AgentMetadataRegistry</c> now
+/// routes through that reader (#822).
 /// </para>
 /// </remarks>
 internal static class AgentSearchPathResolver
