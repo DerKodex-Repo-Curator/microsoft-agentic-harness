@@ -57,7 +57,22 @@ public static class SkillContentRoots
     /// </remarks>
     /// <param name="config">The live application configuration.</param>
     /// <returns>The discovery roots; empty when the AI section is absent.</returns>
-    public static IEnumerable<string> Discovery(AppConfig config)
+    public static IEnumerable<string> Discovery(AppConfig config) =>
+        ConfiguredDiscoveryPaths(config).Select(Resolve);
+
+    /// <summary>
+    /// The configured skill and agent discovery paths exactly as written, before they are resolved to
+    /// absolute form.
+    /// </summary>
+    /// <remarks>
+    /// Exposed so a caller that must tolerate one malformed entry (a boot-time check that should not
+    /// crash on a path the registries log and skip) can resolve each entry itself, inside its own
+    /// try/catch. <see cref="Discovery"/> resolves lazily and throws on the first bad entry, which ends
+    /// the whole enumeration.
+    /// </remarks>
+    /// <param name="config">The live application configuration.</param>
+    /// <returns>The non-blank configured paths; empty when the AI section is absent.</returns>
+    public static IEnumerable<string> ConfiguredDiscoveryPaths(AppConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
 
@@ -68,7 +83,7 @@ public static class SkillContentRoots
         foreach (var path in ai.Skills.AllPaths.Concat(ai.Agents.AllPaths))
         {
             if (!string.IsNullOrWhiteSpace(path))
-                yield return Resolve(path);
+                yield return path;
         }
     }
 
@@ -78,15 +93,37 @@ public static class SkillContentRoots
     /// </summary>
     /// <param name="config">The live application configuration.</param>
     /// <returns>The configured staging root, or the default under the system temp directory.</returns>
-    public static string BundleStaging(AppConfig config)
+    public static string BundleStaging(AppConfig config) => Resolve(ConfiguredBundleStagingPath(config));
+
+    /// <summary>
+    /// The bundle staging root exactly as configured (or the default under the system temp directory),
+    /// before it is resolved to absolute form. See <see cref="ConfiguredDiscoveryPaths"/> for why the
+    /// unresolved form is exposed.
+    /// </summary>
+    /// <param name="config">The live application configuration.</param>
+    /// <returns>The configured staging root, or the default under the system temp directory.</returns>
+    public static string ConfiguredBundleStagingPath(AppConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
 
         var tempRoot = config.AI?.BundleExecution.TempRoot;
         return string.IsNullOrWhiteSpace(tempRoot)
             ? Path.Combine(Path.GetTempPath(), DefaultBundleStagingFolder)
-            : Resolve(tempRoot);
+            : tempRoot;
     }
+
+    /// <summary>
+    /// Every directory skill content is loaded from, exactly as configured: the discovery paths plus the
+    /// bundle staging root, before any is resolved to absolute form.
+    /// </summary>
+    /// <remarks>
+    /// The unresolved counterpart of <see cref="All"/>, for a caller that resolves each entry itself so one
+    /// malformed path cannot end the enumeration. Evaluated against a single configuration snapshot.
+    /// </remarks>
+    /// <param name="config">The live application configuration.</param>
+    /// <returns>The configured discovery paths followed by the staging root.</returns>
+    public static IEnumerable<string> ConfiguredAll(AppConfig config) =>
+        ConfiguredDiscoveryPaths(config).Append(ConfiguredBundleStagingPath(config));
 
     /// <summary>
     /// Every directory skill content may legitimately be read from: the discovery roots plus the

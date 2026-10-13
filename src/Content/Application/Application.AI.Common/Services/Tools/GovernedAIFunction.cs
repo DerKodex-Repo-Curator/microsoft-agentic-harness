@@ -303,8 +303,15 @@ internal sealed class GovernedAIFunction : DelegatingAIFunction
         if (InnerFunction is not ResourceParameterDeclaringAIFunction resourceDeclaring)
             return null;
 
+        // A present parametersJson in a shape this routine cannot read means the call's resource usage is
+        // unknown, not "none" (#823): the tool's own binding may still serialize that object into real
+        // paths, so treating it as empty would let a scoped profile pass a call it never inspected.
+        // Returning null makes CapabilityEnforcer refuse when scoping is configured.
+        if (!TryReadParametersJson(arguments, out var parametersJson))
+            return null;
+
         var operation = ReadOperation(arguments);
-        var parameters = ToolParameters.FromJson(ReadParametersJson(arguments));
+        var parameters = ToolParameters.FromJson(parametersJson);
         return ResourceParameterExtractor.Extract(operation, parameters, resourceDeclaring.ResourceParametersByOperation);
     }
 
@@ -312,28 +319,76 @@ internal sealed class GovernedAIFunction : DelegatingAIFunction
         ToolParameters.ReadStringArgument(arguments, AIToolConverter.OperationArgumentName);
 
     /// <summary>
-    /// Reads the raw <c>parametersJson</c> argument, accepting both shapes <see cref="ReadOperation"/>
-    /// already does — a plain CLR <see cref="string"/> or a <see cref="JsonElement"/> — rather than
-    /// only the latter. A caller outside the standard Microsoft.Extensions.AI pipeline (which always
-    /// supplies a <see cref="JsonElement"/>) that put a raw string here would otherwise silently lose
-    /// it: <c>null</c> here becomes <c>ToolCallResourceRequest.Empty</c> via <see cref="ToolParameters.FromJson"/>
-    /// and <see cref="ResourceParameterExtractor.Extract"/>, which <c>CapabilityEnforcer</c> trusts as
-    /// "determined, and there is none" and skips validating — the exact null-vs-empty conflation this
-    /// whole mechanism exists to prevent, reintroduced one level up. Re-wrapping a string as a
-    /// <see cref="JsonElement"/> costs nothing extra: <see cref="ToolParameters.FromJson"/> already
-    /// parses a string-valued element as JSON (its own double-encoded-string handling).
+    /// Reads the raw <c>parametersJson</c> argument for the resource check, and reports whether it could be
+    /// read at all. The check is only meaningful when governance and the tool see the same parameters, so
+    /// each shape is accepted only where that is true.
     /// </summary>
-    private static JsonElement? ReadParametersJson(AIFunctionArguments arguments)
+    /// <remarks>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///   <b>A <see cref="JsonElement"/> of any kind</b> is passed through. The standard Microsoft.Extensions.AI
+    ///   pipeline always supplies one, the tool's own binding hands that same element to
+    ///   <see cref="ToolParameters.FromJson"/>, and so does this method's caller: one parser on one value,
+    ///   including its double-encoded-string handling.
+    ///   </description></item>
+    ///   <item><description>
+    ///   <b>A CLR <see cref="string"/></b> is NOT passed through unexamined. The tool's binding JSON-parses
+    ///   it before <see cref="ToolParameters.FromJson"/> sees it, so a string holding a JSON <em>string
+    ///   literal</em> of an object is decoded twice there and not here (#823). A string is therefore trusted
+    ///   only when it parses to a top-level JSON object, the one shape both sides read identically. A blank
+    ///   string is "no parameters", as <see cref="ToolParameters.FromJson"/> defines it.
+    ///   </description></item>
+    ///   <item><description>
+    ///   <b>Any other shape</b> (a <c>JsonNode</c>, a dictionary, a POCO) is unreadable: the binding may
+    ///   serialize it into real paths this method cannot see.
+    ///   </description></item>
+    /// </list>
+    /// Treating an unreadable shape as empty would make <c>CapabilityEnforcer</c> read "nothing to check"
+    /// and pass the call, the exact null-versus-empty conflation this mechanism exists to prevent.
+    /// </remarks>
+    /// <returns>
+    /// <see langword="true"/> when the argument is absent, null, blank, a <see cref="JsonElement"/> or a
+    /// string holding a JSON object — <paramref name="parametersJson"/> then holds what was read, or null for
+    /// absent/null/blank. <see langword="false"/> otherwise, which the caller must treat as unknown (#823).
+    /// </returns>
+    private static bool TryReadParametersJson(AIFunctionArguments arguments, out JsonElement? parametersJson)
     {
-        if (!arguments.TryGetValue(AIToolConverter.ParametersJsonArgumentName, out var value))
-            return null;
+        parametersJson = null;
 
-        return value switch
+        if (!arguments.TryGetValue(AIToolConverter.ParametersJsonArgumentName, out var value) || value is null)
+            return true;
+
+        switch (value)
         {
-            JsonElement je => je,
-            string s => JsonSerializer.SerializeToElement(s),
-            _ => null
-        };
+            case JsonElement je:
+                parametersJson = je;
+                return true;
+            case string s when string.IsNullOrWhiteSpace(s):
+                return true;
+            case string s:
+                if (TryParseObject(s) is not { } parsed)
+                    return false;
+
+                parametersJson = parsed;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static JsonElement? TryParseObject(string text)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(text);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                ? document.RootElement.Clone()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>

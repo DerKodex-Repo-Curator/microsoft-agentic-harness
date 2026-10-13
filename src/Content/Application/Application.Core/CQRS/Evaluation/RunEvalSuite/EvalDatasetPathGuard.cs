@@ -1,3 +1,4 @@
+using Application.Common.Helpers;
 using Domain.Common.Config;
 using Microsoft.Extensions.Options;
 
@@ -137,13 +138,12 @@ public sealed class EvalDatasetPathGuard : IEvalDatasetPathGuard
 
         // Resolve symlinks only after canonicalising. A link inside a root may point outside it, and
         // the file the loader ultimately opens is the target, not the link.
-        var walk = new LinkWalk();
-        var effective = ResolveSegments(canonical, walk);
+        var effective = LinkResolver.Resolve(canonical, out var exhausted);
 
         // A walk that ran out of budget did not finish, so `effective` may still be a link — and a link
         // that happens to sit inside a root would otherwise be admitted while opening a target outside
         // it. Not knowing where a path leads is a refusal, not a pass.
-        if (walk.Exhausted)
+        if (exhausted)
             return EvalDatasetPathDecision.Refuse("Dataset is not available.");
 
         foreach (var canonicalRoot in ResolvedRoots(roots))
@@ -205,12 +205,11 @@ public sealed class EvalDatasetPathGuard : IEvalDatasetPathGuard
         {
             try
             {
-                var rootWalk = new LinkWalk();
-                var canonicalRoot = ResolveSegments(Path.GetFullPath(root), rootWalk);
+                var canonicalRoot = LinkResolver.Resolve(Path.GetFullPath(root), out var rootExhausted);
 
                 // An unresolvable root confines nothing knowable, so drop it rather than compare
                 // against a half-resolved path.
-                if (!rootWalk.Exhausted)
+                if (!rootExhausted)
                     resolved.Add(canonicalRoot);
             }
             catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
@@ -231,98 +230,6 @@ public sealed class EvalDatasetPathGuard : IEvalDatasetPathGuard
 
     /// <summary>One resolution of the configured roots, and the configuration it was computed from.</summary>
     private sealed record RootCache(IReadOnlyList<string> Configured, IReadOnlyList<string> Resolved);
-
-    /// <summary>Total symbolic links followed while resolving one path, across every segment.</summary>
-    /// <remarks>
-    /// A budget rather than a per-segment limit: without one, a chain of links each pointing at a path
-    /// containing further links would multiply out instead of terminating.
-    /// </remarks>
-    private const int MaxLinkHops = 16;
-
-    /// <summary>Mutable state threaded through one path walk: links followed, and whether we ran out.</summary>
-    /// <remarks>
-    /// <see cref="Exhausted"/> exists so running out of budget is distinguishable from finishing. Both
-    /// leave a path behind, but only one of them is a path we actually resolved — and an unresolved link
-    /// that happens to sit inside an allowed root would sail through containment.
-    /// </remarks>
-    private sealed class LinkWalk
-    {
-        /// <summary>Links followed so far, across every segment of the path.</summary>
-        public int Hops { get; set; }
-
-        /// <summary>Whether the walk hit <see cref="MaxLinkHops"/> with a link still unresolved.</summary>
-        public bool Exhausted { get; set; }
-    }
-
-    /// <summary>
-    /// Resolves <paramref name="path"/> to the file the operating system would actually open, following
-    /// symbolic links on <em>every</em> segment: the parent chain first, then the segment itself.
-    /// </summary>
-    /// <remarks>
-    /// .NET has no <c>realpath</c>, and the built-in <c>ResolveLinkTarget</c> only inspects the final
-    /// segment. Resolving the leaf alone would leave the obvious evasion open: a <em>directory</em> link
-    /// sitting inside an allowed root, pointing anywhere on disk. Every path under it would then
-    /// canonicalise to something that starts with the root while opening a file that does not.
-    /// </remarks>
-    private static string ResolveSegments(string path, LinkWalk walk)
-    {
-        var parent = Path.GetDirectoryName(path);
-
-        // No parent means a volume root ("C:\", "/"), which terminates the walk.
-        if (string.IsNullOrEmpty(parent))
-            return path;
-
-        var current = Path.Combine(ResolveSegments(parent, walk), Path.GetFileName(path));
-
-        string? linkTarget;
-        try
-        {
-            // The raw target string, not ResolveLinkTarget's FileSystemInfo: a relative target has to be
-            // resolved against the link's own directory, and reconstructing an absolute path from a
-            // FileSystemInfo resolves it against the process's current directory instead.
-            linkTarget = Directory.Exists(current)
-                ? new DirectoryInfo(current).LinkTarget
-                : new FileInfo(current).LinkTarget;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Unreadable is not the same as escaping. Return what we have; the containment check and the
-            // File.Exists probe that follow both fail closed.
-            return current;
-        }
-
-        if (linkTarget is null)
-            return current;
-
-        if (walk.Hops >= MaxLinkHops)
-        {
-            walk.Exhausted = true;
-            return current;
-        }
-
-        walk.Hops++;
-
-        // The target may itself sit beneath further links, so it goes through the same walk rather than
-        // being trusted as final. This is also what bounds a link cycle: each turn costs a hop.
-        string absoluteTarget;
-        try
-        {
-            var linkDirectory = Path.GetDirectoryName(current);
-            absoluteTarget = string.IsNullOrEmpty(linkDirectory)
-                ? Path.GetFullPath(linkTarget)
-                : Path.GetFullPath(linkTarget, linkDirectory);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            // A reparse point whose stored target is malformed. Unresolvable, so treat it exactly like a
-            // budget exhaustion: we do not know where this leads, and every other failure mode here
-            // refuses rather than guessing. Letting it throw would surface as a 500 instead.
-            walk.Exhausted = true;
-            return current;
-        }
-
-        return ResolveSegments(absoluteTarget, walk);
-    }
 
     /// <summary>
     /// Whether <paramref name="candidate"/> sits inside <paramref name="root"/>.

@@ -347,6 +347,21 @@ public static partial class DependencyInjection
         // the first (lazy) skill/MCP discovery. Empty Packages list is a clean no-op.
         services.AddHostedService<PluginStartupLoader>();
 
+        // #824: refuse to boot when the file-system tool may write into a directory the skill or agent
+        // registry scans, since a model-written AGENT.md/SKILL.md there would be registered live. Placed
+        // AFTER PluginStartupLoader on purpose: hosted services start in registration order, and plugins
+        // append their skill directories to the live configuration there, so the discovery roots are read
+        // at StartAsync (not captured here) and only complete once the loader has run. The allowed paths
+        // are handed over by value so the assertion covers exactly what FileSystemService enforces.
+        services.AddHostedService(sp =>
+        {
+            var liveConfig = sp.GetRequiredService<IOptionsMonitor<AppConfig>>();
+            return new FileSystemDiscoveryOverlapStartupValidator(
+                allowedBasePaths,
+                () => Skills.SkillContentRoots.ConfiguredAll(liveConfig.CurrentValue),
+                sp.GetRequiredService<ILogger<FileSystemDiscoveryOverlapStartupValidator>>());
+        });
+
         // #524: a plugin's AllowedTools/DeniedTools entry that matches no real tool is a silent
         // no-op today — worst for DeniedTools, documented as bypass-immune. The tracker resolves
         // MCP-sourced entries lazily as servers are organically discovered (McpToolProvider);
