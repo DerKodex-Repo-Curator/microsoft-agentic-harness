@@ -113,6 +113,19 @@ public static class SkillContentRoots
     }
 
     /// <summary>
+    /// Every directory skill content is loaded from, exactly as configured: the discovery paths plus the
+    /// bundle staging root, before any is resolved to absolute form.
+    /// </summary>
+    /// <remarks>
+    /// The unresolved counterpart of <see cref="All"/>, for a caller that resolves each entry itself so one
+    /// malformed path cannot end the enumeration. Evaluated against a single configuration snapshot.
+    /// </remarks>
+    /// <param name="config">The live application configuration.</param>
+    /// <returns>The configured discovery paths followed by the staging root.</returns>
+    public static IEnumerable<string> ConfiguredAll(AppConfig config) =>
+        ConfiguredDiscoveryPaths(config).Append(ConfiguredBundleStagingPath(config));
+
+    /// <summary>
     /// Every directory skill content may legitimately be read from: the discovery roots plus the
     /// bundle staging root (a staged bundle carries its own <c>skills/</c> directory).
     /// </summary>

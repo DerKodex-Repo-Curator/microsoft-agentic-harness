@@ -35,7 +35,7 @@ public sealed class ShippedHostSandboxGeometryTests
     [MemberData(nameof(Hosts))]
     public async Task CommittedAppSettings_DoNotLetTheFileToolReachSkillOrAgentContent(string host)
     {
-        var path = Path.Combine(RepoRoot.Path, "src", "Content", "Presentation", host, "appsettings.json");
+        var path = RepoRoot.Combine("src", "Content", "Presentation", host, "appsettings.json");
         File.Exists(path).Should().BeTrue($"the committed settings for {host} must exist for this check to mean anything");
 
         var config = new ConfigurationBuilder().AddJsonFile(path).Build()
@@ -46,7 +46,7 @@ public sealed class ShippedHostSandboxGeometryTests
         var allowed = config!.Infrastructure.FileSystem.AllowedBasePaths
             .Append(config.Logging.LogsBasePath ?? string.Empty)
             .Where(p => !string.IsNullOrWhiteSpace(p))
-            .Select(p => Path.IsPathRooted(p) ? p : Path.GetFullPath(p, AppContext.BaseDirectory))
+            .Select(SkillContentRoots.Resolve)
             .ToList();
 
         allowed.Should().NotBeEmpty("a host with no allowed paths would make this vacuous");
@@ -55,8 +55,7 @@ public sealed class ShippedHostSandboxGeometryTests
 
         var sut = new FileSystemDiscoveryOverlapStartupValidator(
             allowed,
-            () => SkillContentRoots.ConfiguredDiscoveryPaths(config)
-                .Append(SkillContentRoots.ConfiguredBundleStagingPath(config)),
+            () => SkillContentRoots.ConfiguredAll(config),
             NullLogger<FileSystemDiscoveryOverlapStartupValidator>.Instance);
 
         await sut.Invoking(s => s.StartAsync(CancellationToken.None)).Should().NotThrowAsync();

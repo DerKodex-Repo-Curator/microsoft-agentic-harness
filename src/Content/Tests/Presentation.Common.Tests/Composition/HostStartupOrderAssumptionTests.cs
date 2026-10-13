@@ -21,7 +21,7 @@ public sealed class HostStartupOrderAssumptionTests
     [Fact]
     public void NoProductionHostStartsItsHostedServicesConcurrently()
     {
-        var contentRoot = Path.Combine(RepoRoot.Path, "src", "Content");
+        var contentRoot = RepoRoot.Combine("src", "Content");
 
         var sources = SourceScan.ReadProductionSources(contentRoot);
         sources.Should().NotBeEmpty("the production source this reads must exist for its verdict to mean anything");

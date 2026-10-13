@@ -13,9 +13,7 @@ namespace Application.Common.Helpers;
 /// proves nothing.
 /// </para>
 /// <para>
-/// Extracted from <c>EvalDatasetPathGuard</c> so the one tested implementation is shared by every guard that
-/// needs it, rather than each hand-writing a second copy of a subtle walk. The caller must treat
-/// <c>exhausted</c> as "unknown": it means the walk gave up with a link still unresolved, and a path that
+/// The caller must treat <c>exhausted</c> as "unknown": it means the walk gave up with a link still unresolved, and a path that
 /// might still be a link must never be admitted on the strength of where it looked like it pointed.
 /// </para>
 /// </remarks>
