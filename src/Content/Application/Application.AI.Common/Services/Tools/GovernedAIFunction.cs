@@ -332,9 +332,10 @@ internal sealed class GovernedAIFunction : DelegatingAIFunction
     /// </summary>
     /// <returns>
     /// <see langword="true"/> when the argument is absent, null, a <see cref="JsonElement"/> or a
-    /// <see cref="string"/> — <paramref name="parametersJson"/> then holds what was read, or null for
-    /// absent/null. <see langword="false"/> when it is present in any other shape (a <c>JsonNode</c>, a
-    /// dictionary, a POCO), which the caller must treat as unreadable, not as empty (#823).
+    /// <see cref="string"/> holding a JSON object — <paramref name="parametersJson"/> then holds what was
+    /// read, or null for absent/null. <see langword="false"/> when it is present in any other shape (a
+    /// <c>JsonNode</c>, a dictionary, a POCO, a string that is not a JSON object), which the caller must
+    /// treat as unreadable, not as empty (#823).
     /// </returns>
     private static bool TryReadParametersJson(AIFunctionArguments arguments, out JsonElement? parametersJson)
     {
@@ -349,10 +350,32 @@ internal sealed class GovernedAIFunction : DelegatingAIFunction
                 parametersJson = je;
                 return true;
             case string s:
-                parametersJson = JsonSerializer.SerializeToElement(s);
+                // Trusted only when it parses to a top-level JSON object, the one shape both this routine
+                // and the tool's own binding provably read the same way. Anything else — a JSON string
+                // literal of an object (decoded twice by the binding but opaque here), free text, a bare
+                // array — is read differently on the two sides, so it is unknown, not empty.
+                if (TryParseObject(s) is not { } parsed)
+                    return false;
+
+                parametersJson = parsed;
                 return true;
             default:
                 return false;
+        }
+    }
+
+    private static JsonElement? TryParseObject(string text)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(text);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                ? document.RootElement.Clone()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 
