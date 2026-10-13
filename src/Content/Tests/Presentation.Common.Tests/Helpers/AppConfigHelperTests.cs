@@ -84,7 +84,6 @@ public sealed class AppConfigHelperTests
 
         config.Common.ApplicationName.Should().Be("AgenticHarness");
         config.Common.ApplicationVersion.Should().Be("1.0");
-        config.Common.SlowThresholdSec.Should().Be(5);
     }
 
     [Fact]

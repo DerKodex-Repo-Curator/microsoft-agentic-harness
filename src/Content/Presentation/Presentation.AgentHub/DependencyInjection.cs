@@ -5,6 +5,8 @@ using Application.AI.Common.Interfaces.DriftDetection;
 using Application.AI.Common.Interfaces.Escalation;
 using Application.AI.Common.Interfaces.Learnings;
 using Application.AI.Common.Interfaces.Planner;
+using Application.Common.Extensions;
+using FluentValidation;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Http;
@@ -369,8 +371,10 @@ public static class DependencyInjection
             });
         });
 
-        services.Configure<AgentHubConfig>(
-            configuration.GetSection("AppConfig:AgentHub"));
+        services.AddOptions<AgentHubConfig>()
+            .Bind(configuration.GetSection("AppConfig:AgentHub"))
+            .ValidateFluentValidation<AgentHubConfig, AgentHubConfigValidator>()
+            .ValidateOnStart();
 
         services.Configure<PrometheusConfig>(
             configuration.GetSection("AppConfig:Prometheus"));
@@ -493,23 +497,29 @@ public static class DependencyInjection
     /// inert. Throws synchronously, as part of composing this host's services, so a misconfigured
     /// value fails the host at startup rather than the first time something resolves
     /// <c>IOptions&lt;HubOptions&gt;</c>.
+    /// <para>
+    /// The rule itself lives in <see cref="AgentHubConfigValidator"/> so it exists once; this method runs
+    /// it for this one property only. The rest of <see cref="Config.AgentHubConfig"/> is validated by the
+    /// options pipeline (<c>ValidateOnStart</c>), where SignalR's need for an early value does not apply.
+    /// </para>
     /// </remarks>
     private static long? ResolveSignalRMaxMessageSizeBytes(IConfiguration configuration)
     {
         var agentHubConfig = configuration.GetSection("AppConfig:AgentHub").Get<AgentHubConfig>()
             ?? new AgentHubConfig();
-        var maxMessageSizeBytes = agentHubConfig.SignalRMaxReceiveMessageSizeBytes;
 
-        if (maxMessageSizeBytes is { } bytes && bytes <= 0)
+        var result = new AgentHubConfigValidator().Validate(
+            agentHubConfig,
+            options => options.IncludeProperties(c => c.SignalRMaxReceiveMessageSizeBytes));
+
+        if (!result.IsValid)
         {
             throw new InvalidOperationException(
-                $"AppConfig:AgentHub:SignalRMaxReceiveMessageSizeBytes must be a positive number " +
-                $"of bytes when set (got {bytes}). Leave it unset to keep SignalR's 32KB default — " +
-                "0 is not 'unlimited' here, SignalR would apply it literally and reject every hub " +
-                "invocation.");
+                string.Join(" ", result.Errors.Select(e => e.ErrorMessage))
+                + $" (got {agentHubConfig.SignalRMaxReceiveMessageSizeBytes}).");
         }
 
-        return maxMessageSizeBytes;
+        return agentHubConfig.SignalRMaxReceiveMessageSizeBytes;
     }
 }
 

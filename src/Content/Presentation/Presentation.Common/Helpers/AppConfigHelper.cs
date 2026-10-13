@@ -182,8 +182,7 @@ public static class AppConfigHelper
             Common = new()
             {
                 ApplicationName = "AgenticHarness",
-                ApplicationVersion = "1.0",
-                SlowThresholdSec = 5
+                ApplicationVersion = "1.0"
             },
             Logging = new()
             {

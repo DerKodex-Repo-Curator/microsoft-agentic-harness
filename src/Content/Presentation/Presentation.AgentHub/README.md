@@ -156,6 +156,7 @@ Presentation.AgentHub/
 │   └── DevAuthHandler.cs             Development auth bypass
 ├── Config/
 │   ├── AgentHubConfig.cs             Hub-specific settings
+│   ├── AgentHubConfigValidator.cs    Startup validation for AgentHubConfig
 │   ├── AgentHubCorsConfig.cs         CORS origin list
 │   └── PrometheusConfig.cs           Prometheus query proxy settings
 ├── Controllers/

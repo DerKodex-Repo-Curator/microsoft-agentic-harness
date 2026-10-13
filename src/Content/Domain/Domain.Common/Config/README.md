@@ -79,7 +79,7 @@ public class MyService
 
 ### Common Configuration (`AppConfig.Common`)
 
-- **SlowThresholdSec**: Not read by anything at present (default: 5s). It belonged to `RequestPerformanceBehavior`, which `RequestTracingBehavior` replaced; slow requests are found from span durations in the telemetry backend.
+- **ApplicationName** (default: `AgenticHarness`) and **ApplicationVersion** (default: `1.0`): stamped onto OTel resources and health-check output. Slow requests are found from span durations in the telemetry backend, not from a configured threshold.
 
 ### Logging Configuration (`AppConfig.Logging`)
 

@@ -345,16 +345,6 @@
                                 <td><code>"1.0"</code></td>
                                 <td>Stamped onto OTel resources and API version metadata.</td>
                             </tr>
-                            <tr>
-                                <td><code>SlowThresholdSec</code></td>
-                                <td>int</td>
-                                <td><code>5</code></td>
-                                <td>
-                                    Not read by anything at present. It belonged to a performance-logging behaviour
-                                    that <code>RequestTracingBehavior</code> replaced; slow requests are now found from
-                                    span durations in the telemetry backend, so changing this value has no effect.
-                                </td>
-                            </tr>
                         </tbody>
                     </table>
 
