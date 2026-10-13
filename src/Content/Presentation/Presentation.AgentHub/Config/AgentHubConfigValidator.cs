@@ -3,9 +3,16 @@ using FluentValidation;
 namespace Presentation.AgentHub.Config;
 
 /// <summary>
-/// Validates <see cref="AgentHubConfig"/>, asserting that every bound the section declares is a usable one.
+/// Validates <see cref="AgentHubConfig"/>, asserting that each numeric bound the section declares is usable.
 /// </summary>
 /// <remarks>
+/// <para>
+/// Only the numeric bounds are checked. <see cref="AgentHubConfig.DefaultAgentName"/> is deliberately free
+/// (blank means no default agent) and the <see cref="AgentHubConfig.Cors"/> origin list is consumed by the
+/// CORS policy at composition. The documented relationship between
+/// <see cref="AgentHubConfig.ClientToolTimeoutSeconds"/> and the agent turn timeout spans two configs and is
+/// not enforced here.
+/// </para>
 /// <para>
 /// Every rule is unconditional. The class defaults are all valid, so a host that omits the
 /// <c>AppConfig:AgentHub</c> section binds defaults and boots unchanged; a rule only bites when an operator
@@ -44,7 +51,7 @@ public sealed class AgentHubConfigValidator : AbstractValidator<AgentHubConfig>
         RuleFor(x => x.SignalRMaxReceiveMessageSizeBytes)
             .GreaterThan(0)
             .When(x => x.SignalRMaxReceiveMessageSizeBytes.HasValue)
-            .WithMessage("AppConfig:AgentHub:SignalRMaxReceiveMessageSizeBytes must be a positive number of bytes when set. "
+            .WithMessage("AppConfig:AgentHub:SignalRMaxReceiveMessageSizeBytes must be a positive number of bytes when set (got {PropertyValue}). "
                 + "Leave it unset to keep SignalR's 32KB default — 0 is not 'unlimited' here, SignalR would apply it "
                 + "literally and reject every hub invocation.");
     }

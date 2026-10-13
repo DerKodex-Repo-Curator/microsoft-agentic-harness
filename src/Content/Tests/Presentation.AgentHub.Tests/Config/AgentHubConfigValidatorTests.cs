@@ -76,18 +76,22 @@ public sealed class AgentHubConfigValidatorTests
         _sut.Validate(new AgentHubConfig { SignalRMaxReceiveMessageSizeBytes = null }).IsValid.Should().BeTrue();
     }
 
-    [Fact]
-    public void AddAgentHubServices_InvalidSection_FailsWhenOptionsResolve()
+    [Theory]
+    [InlineData("MaxHistoryMessages")]
+    [InlineData("SessionIdleTimeoutMinutes")]
+    [InlineData("ClientToolTimeoutSeconds")]
+    public void AddAgentHubServices_InvalidSection_FailsWhenOptionsResolve(string key)
     {
         // Proves the validator is bound into the options pipeline: delete the
-        // ValidateFluentValidation call in DependencyInjection and this test goes red.
+        // ValidateFluentValidation call in DependencyInjection and these go red. One case per rule,
+        // because a rule that is unit-tested but whose property never reaches the pipeline is inert.
         using var provider = AgentHubTestServiceProviderFactory.Build(
-            new Dictionary<string, string?> { ["AppConfig:AgentHub:MaxHistoryMessages"] = "0" });
+            new Dictionary<string, string?> { [$"AppConfig:AgentHub:{key}"] = "0" });
 
         var act = () => provider.GetRequiredService<IOptions<AgentHubConfig>>().Value;
 
         act.Should().Throw<OptionsValidationException>()
-            .WithMessage("*MaxHistoryMessages*");
+            .WithMessage($"*{key}*");
     }
 
     [Fact]

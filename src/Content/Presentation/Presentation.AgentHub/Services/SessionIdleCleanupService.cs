@@ -41,12 +41,35 @@ internal sealed class SessionIdleCleanupService : BackgroundService
             while (!stoppingToken.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
-                await CleanupIdleSessionsAsync(stoppingToken);
+                await RunTickAsync(stoppingToken);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
             // Host is shutting down — expected.
+        }
+    }
+
+    /// <summary>
+    /// Runs one cleanup pass, containing any failure so a single bad tick cannot stop the host.
+    /// </summary>
+    /// <remarks>
+    /// An exception escaping <see cref="ExecuteAsync"/> triggers the default
+    /// <c>BackgroundServiceExceptionBehavior.StopHost</c>. The realistic trigger is a hot-reloaded
+    /// <c>AppConfig:AgentHub</c> value that fails <see cref="AgentHubConfigValidator"/>: the options
+    /// monitor then throws <see cref="OptionsValidationException"/> from <c>CurrentValue</c>. The failed
+    /// pass is logged and retried on the next tick, once the configuration is corrected. Cancellation is
+    /// not contained — it is how shutdown reaches the loop.
+    /// </remarks>
+    internal async Task RunTickAsync(CancellationToken ct)
+    {
+        try
+        {
+            await CleanupIdleSessionsAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Idle session cleanup failed; it will be retried on the next tick.");
         }
     }
 

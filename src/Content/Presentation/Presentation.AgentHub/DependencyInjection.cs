@@ -515,8 +515,7 @@ public static class DependencyInjection
         if (!result.IsValid)
         {
             throw new InvalidOperationException(
-                string.Join(" ", result.Errors.Select(e => e.ErrorMessage))
-                + $" (got {agentHubConfig.SignalRMaxReceiveMessageSizeBytes}).");
+                string.Join(" ", result.Errors.Select(e => e.ErrorMessage)));
         }
 
         return agentHubConfig.SignalRMaxReceiveMessageSizeBytes;
