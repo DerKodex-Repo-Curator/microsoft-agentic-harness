@@ -81,6 +81,40 @@ public sealed class DependencyInjectionTests
     }
 
     [Fact]
+    public void AddInfrastructureAIDependencies_RegistersTheDiscoveryOverlapValidator_AfterThePluginLoader()
+    {
+        // #824: the validator is only a control if the host actually runs it, and only complete if it runs
+        // after PluginStartupLoader (plugins append skill directories to the live configuration there).
+        // Hosted services start in registration order, so this asserts the order the host will use.
+        var services = CreateBaseServices();
+        services.AddInfrastructureAIDependencies(IsolatedAppConfig.Create());
+        using var provider = services.BuildServiceProvider();
+
+        var hosted = provider.GetServices<IHostedService>().Select(s => s.GetType()).ToList();
+
+        hosted.Should().Contain(typeof(Infrastructure.AI.Tools.FileSystemDiscoveryOverlapStartupValidator));
+        hosted.IndexOf(typeof(Infrastructure.AI.Tools.FileSystemDiscoveryOverlapStartupValidator))
+            .Should().BeGreaterThan(hosted.IndexOf(typeof(PluginStartupLoader)),
+                "plugin skill directories are appended by the loader, so the check must run after it");
+    }
+
+    [Fact]
+    public async Task AddInfrastructureAIDependencies_ShippedStyleConfig_TheDiscoveryOverlapValidatorPasses()
+    {
+        // A control that fails on the default configuration gets turned off. Resolve the real validator from
+        // the real registration with the isolated default config and start it.
+        var services = CreateBaseServices();
+        services.AddInfrastructureAIDependencies(IsolatedAppConfig.Create());
+        using var provider = services.BuildServiceProvider();
+
+        var validator = provider.GetServices<IHostedService>()
+            .OfType<Infrastructure.AI.Tools.FileSystemDiscoveryOverlapStartupValidator>()
+            .Single();
+
+        await validator.Invoking(v => v.StartAsync(CancellationToken.None)).Should().NotThrowAsync();
+    }
+
+    [Fact]
     public void AddInfrastructureAIDependencies_RegistersIOwnerOnlyDirectoryCreator()
     {
         // #671/#672/#673: the seam Application.Core, Application.Common, and

@@ -411,7 +411,10 @@ The project reads configuration from `AppConfig` bound via the Options pattern. 
         // Sandboxed directories for file tools, resolved against AppContext.BaseDirectory.
         // Keep this NARROW. "../../../.." resolves to the project directory, which contains
         // bin/<config>/<tfm>/.agent-state — the governance-state database — and
-        // FileSystemSandboxStartupValidator refuses to boot on that overlap.
+        // FileSystemSandboxStartupValidator refuses to boot on that overlap. The same goes for a
+        // path that contains, or sits inside, a skill or agent discovery root (AI:Skills, AI:Agents):
+        // FileSystemDiscoveryOverlapStartupValidator refuses it, because a file the model writes there
+        // as AGENT.md or SKILL.md would be registered as a live agent or skill.
         "AllowedBasePaths": ["workspace"]
       }
     }
