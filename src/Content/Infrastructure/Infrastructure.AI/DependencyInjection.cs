@@ -358,7 +358,8 @@ public static partial class DependencyInjection
             var liveConfig = sp.GetRequiredService<IOptionsMonitor<AppConfig>>();
             return new FileSystemDiscoveryOverlapStartupValidator(
                 [.. allowedBasePaths],
-                () => [.. Skills.SkillContentRoots.Discovery(liveConfig.CurrentValue)],
+                () => Skills.SkillContentRoots.ConfiguredDiscoveryPaths(liveConfig.CurrentValue)
+                    .Append(Skills.SkillContentRoots.ConfiguredBundleStagingPath(liveConfig.CurrentValue)),
                 sp.GetRequiredService<ILogger<FileSystemDiscoveryOverlapStartupValidator>>());
         });
 

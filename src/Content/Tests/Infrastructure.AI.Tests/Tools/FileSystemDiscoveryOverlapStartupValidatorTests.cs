@@ -39,7 +39,7 @@ public sealed class FileSystemDiscoveryOverlapStartupValidatorTests : IDisposabl
     }
 
     private static FileSystemDiscoveryOverlapStartupValidator NewSut(
-        IReadOnlyList<string> allowedBasePaths, Func<IReadOnlyList<string>> discoveryRoots) =>
+        IReadOnlyList<string> allowedBasePaths, Func<IEnumerable<string>> discoveryRoots) =>
         new(allowedBasePaths, discoveryRoots, NullLogger<FileSystemDiscoveryOverlapStartupValidator>.Instance);
 
     [Fact]
@@ -120,6 +120,84 @@ public sealed class FileSystemDiscoveryOverlapStartupValidatorTests : IDisposabl
             .Should().NotThrowAsync();
         await NewSut(["", "   "], () => [workspace]).Invoking(s => s.StartAsync(CancellationToken.None))
             .Should().NotThrowAsync();
+    }
+
+    [SkippableFact]
+    public async Task StartAsync_DiscoveryRootReachedThroughASymlinkedParent_Throws()
+    {
+        // The same directory under two spellings: alias -> real. The root is configured through the alias,
+        // the allowed path through the real location. Resolving only the final segment (the old behaviour of
+        // the shared canonicalizer) compared two different strings and reported no overlap.
+        var real = CreateDirectory("real");
+        CreateDirectory("real", "repo", "skills");
+        var alias = Path.Combine(_root, "alias");
+        SandboxLinkFactory.CreateDirectoryLink(alias, real);
+
+        var sut = NewSut([Path.Combine(real, "repo")], () => [Path.Combine(alias, "repo", "skills")]);
+
+        await sut.Invoking(s => s.StartAsync(CancellationToken.None)).Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    [SkippableFact]
+    public async Task StartAsync_AllowedPathReachedThroughASymlinkedParent_Throws()
+    {
+        // The mirror image: the allowed path goes through the alias, the root through the real location.
+        var real = CreateDirectory("real");
+        var skills = CreateDirectory("real", "repo", "skills");
+        var alias = Path.Combine(_root, "alias");
+        SandboxLinkFactory.CreateDirectoryLink(alias, real);
+
+        var sut = NewSut([Path.Combine(alias, "repo")], () => [skills]);
+
+        await sut.Invoking(s => s.StartAsync(CancellationToken.None)).Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    [SkippableFact]
+    public async Task StartAsync_ALinkChainLongerThanTheHopBudget_RefusesInsteadOfGuessing()
+    {
+        // A path that cannot be fully resolved cannot be shown not to overlap, so it is a refusal. The chain is
+        // built tail-first so each link points at one that already exists.
+        var current = CreateDirectory("chain-real");
+        for (var i = 0; i <= Domain.Common.Helpers.LinkResolver.MaxLinkHops; i++)
+        {
+            var link = Path.Combine(_root, $"hop-{i}");
+            SandboxLinkFactory.CreateDirectoryLink(link, current);
+            current = link;
+        }
+
+        var skills = CreateDirectory("skills");
+
+        var sut = NewSut([current], () => [skills]);
+
+        var ex = await sut.Invoking(s => s.StartAsync(CancellationToken.None))
+            .Should().ThrowAsync<InvalidOperationException>();
+        ex.Which.Message.Should().Contain("could not be fully resolved");
+    }
+
+    [SkippableFact]
+    public async Task StartAsync_ExtendedLengthSpellingOfTheSameDirectory_Throws()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(), "Extended-length (\\\\?\\) paths exist only on Windows.");
+        var agents = CreateDirectory("agents");
+
+        var sut = NewSut([@"\\?\" + agents], () => [agents]);
+
+        await sut.Invoking(s => s.StartAsync(CancellationToken.None)).Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task StartAsync_AMalformedEntry_IsSkippedNotFatal_AndARealOverlapIsStillFound()
+    {
+        // The registries log and skip a path they cannot resolve; this must not turn that into a crash. Both
+        // halves matter: the bad entry is tolerated, and a genuine overlap listed next to it is not masked.
+        var agents = CreateDirectory("agents");
+
+        await NewSut([_root], () => ["\0not-a-valid-path", Path.Combine(_root, "unrelated-elsewhere")])
+            .Invoking(s => s.StartAsync(CancellationToken.None)).Should().ThrowAsync<InvalidOperationException>(
+                "the allowed path _root contains the second (valid) root");
+
+        await NewSut([CreateDirectory("somewhere-else")], () => ["\0not-a-valid-path", agents])
+            .Invoking(s => s.StartAsync(CancellationToken.None)).Should().NotThrowAsync();
     }
 
     [Fact]

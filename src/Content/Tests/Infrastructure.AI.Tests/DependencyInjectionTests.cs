@@ -115,6 +115,39 @@ public sealed class DependencyInjectionTests
     }
 
     [Fact]
+    public async Task AddInfrastructureAIDependencies_AllowedPathOverlappingTheBundleStagingRoot_TheValidatorRefusesToStart()
+    {
+        // Skill content is read from the bundle staging root at run time, so the file-system tool must not be
+        // able to write there either. This resolves the real validator from the real registration, which is
+        // what proves the staging root is part of the root set the host actually passes in.
+        var shared = Path.Combine(Path.GetTempPath(), "infra-ai-tests-staging-" + Guid.NewGuid().ToString("N"));
+        var config = IsolatedAppConfig.Create();
+        config.Infrastructure.FileSystem.AllowedBasePaths = [shared];
+        config.AI.BundleExecution.TempRoot = shared;
+
+        try
+        {
+            // The same instance feeds both the registration (allowed paths) and the live options monitor the
+            // validator reads the staging root from, as in a real host.
+            var services = CreateBaseServices(config);
+            services.AddInfrastructureAIDependencies(config);
+            using var provider = services.BuildServiceProvider();
+
+            var validator = provider.GetServices<IHostedService>()
+                .OfType<Infrastructure.AI.Tools.FileSystemDiscoveryOverlapStartupValidator>()
+                .Single();
+
+            await validator.Invoking(v => v.StartAsync(CancellationToken.None))
+                .Should().ThrowAsync<InvalidOperationException>();
+        }
+        finally
+        {
+            if (Directory.Exists(shared))
+                Directory.Delete(shared, recursive: true);
+        }
+    }
+
+    [Fact]
     public void AddInfrastructureAIDependencies_RegistersIOwnerOnlyDirectoryCreator()
     {
         // #671/#672/#673: the seam Application.Core, Application.Common, and
