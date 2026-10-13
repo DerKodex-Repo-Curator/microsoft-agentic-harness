@@ -34,8 +34,8 @@ namespace Application.AI.Common.Tests.Services.Tools;
 /// <para>
 /// The container is assembled the way <see cref="DirectToolInvokerTests"/> assembles it (real admission
 /// chain, test-double governor and reporter) and lives in the <c>Fixture</c> partial. It is deliberately
-/// not shared with that suite yet, so that suite stays untouched; the two copies of the gate registration
-/// should be folded into one helper in a follow-up, or a new required gate will break only one of them.
+/// not shared with that suite yet, so that suite stays untouched. Until #827 folds the two copies of the gate
+/// registration into one helper, a new required gate will break only one of them.
 /// </para>
 /// </remarks>
 public sealed partial class DirectToolInvokerMcpTests
@@ -239,6 +239,8 @@ public sealed partial class DirectToolInvokerMcpTests
         var outcome = await InvokeWithProvider(Request(envelope));
 
         outcome.Status.Should().Be(DirectToolInvocationStatus.NotFound);
+        // Not AssertNoServerContacted(): "granted-only" is legitimately contacted. Only the ungranted
+        // server and the two lookups that search every configured server must stay untouched.
         _provider.Verify(p => p.GetToolsAsync(Server, It.IsAny<CancellationToken>()), Times.Never);
         _provider.Verify(p => p.GetAllToolsAsync(It.IsAny<CancellationToken>()), Times.Never);
         _provider.Verify(p => p.GetToolByNameAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);

@@ -6,7 +6,6 @@ using Application.AI.Common.Interfaces.Governance;
 using Application.AI.Common.Interfaces.Telemetry;
 using Application.AI.Common.Interfaces.Tools;
 using Application.AI.Common.Services.Agent;
-using Application.AI.Common.Services.Governance;
 using Application.AI.Common.Services.Tools;
 using Application.AI.Common.Tests.Governance;
 using Domain.AI.Bundles;
@@ -95,7 +94,8 @@ public sealed partial class DirectToolInvokerMcpTests
         // Every gate is registered unconditionally: the chain requires all of them, and an absent gate
         // and a permissive one must never be confusable at runtime.
         services.AddSingleton(AdmissionHarness.PermissiveClassificationGate());
-        services.AddSingleton<IToolCallObserverChain>(new NoObservers());
+        // A mock reports HasObservers == false, so the chain never asks it for a decision.
+        services.AddSingleton(Mock.Of<IToolCallObserverChain>());
         services.AddSingleton(AdmissionHarness.PermissiveProgressEvaluator());
         services.AddSingleton<IGovernanceTraceRecorder>(AdmissionHarness.TraceRecorder());
         services.AddSingleton(AdmissionHarness.PermissiveAuthorizationGate());
@@ -142,15 +142,6 @@ public sealed partial class DirectToolInvokerMcpTests
 
             return record.Decision;
         }
-    }
-
-    private sealed class NoObservers : IToolCallObserverChain
-    {
-        public bool HasObservers => false;
-
-        public ValueTask<ToolInvocationDecision> EvaluateAsync(
-            string toolName, IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(ToolInvocationDecision.Allow());
     }
 
     private sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
