@@ -303,8 +303,15 @@ internal sealed class GovernedAIFunction : DelegatingAIFunction
         if (InnerFunction is not ResourceParameterDeclaringAIFunction resourceDeclaring)
             return null;
 
+        // A present parametersJson in a shape this routine cannot read means the call's resource usage is
+        // unknown, not "none" (#823): the tool's own binding may still serialize that object into real
+        // paths, so treating it as empty would let a scoped profile pass a call it never inspected.
+        // Returning null makes CapabilityEnforcer refuse when scoping is configured.
+        if (!TryReadParametersJson(arguments, out var parametersJson))
+            return null;
+
         var operation = ReadOperation(arguments);
-        var parameters = ToolParameters.FromJson(ReadParametersJson(arguments));
+        var parameters = ToolParameters.FromJson(parametersJson);
         return ResourceParameterExtractor.Extract(operation, parameters, resourceDeclaring.ResourceParametersByOperation);
     }
 
@@ -323,17 +330,30 @@ internal sealed class GovernedAIFunction : DelegatingAIFunction
     /// <see cref="JsonElement"/> costs nothing extra: <see cref="ToolParameters.FromJson"/> already
     /// parses a string-valued element as JSON (its own double-encoded-string handling).
     /// </summary>
-    private static JsonElement? ReadParametersJson(AIFunctionArguments arguments)
+    /// <returns>
+    /// <see langword="true"/> when the argument is absent, null, a <see cref="JsonElement"/> or a
+    /// <see cref="string"/> — <paramref name="parametersJson"/> then holds what was read, or null for
+    /// absent/null. <see langword="false"/> when it is present in any other shape (a <c>JsonNode</c>, a
+    /// dictionary, a POCO), which the caller must treat as unreadable, not as empty (#823).
+    /// </returns>
+    private static bool TryReadParametersJson(AIFunctionArguments arguments, out JsonElement? parametersJson)
     {
-        if (!arguments.TryGetValue(AIToolConverter.ParametersJsonArgumentName, out var value))
-            return null;
+        parametersJson = null;
 
-        return value switch
+        if (!arguments.TryGetValue(AIToolConverter.ParametersJsonArgumentName, out var value) || value is null)
+            return true;
+
+        switch (value)
         {
-            JsonElement je => je,
-            string s => JsonSerializer.SerializeToElement(s),
-            _ => null
-        };
+            case JsonElement je:
+                parametersJson = je;
+                return true;
+            case string s:
+                parametersJson = JsonSerializer.SerializeToElement(s);
+                return true;
+            default:
+                return false;
+        }
     }
 
     /// <summary>

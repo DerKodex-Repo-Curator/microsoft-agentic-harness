@@ -190,6 +190,60 @@ public sealed class ToolPathScopingEndToEndTests
     }
 
     [Fact]
+    public async Task AgentTurnPath_ScopedProfile_ParametersJsonArrivesAsAJsonNode_NeverReachesTheFileSystem()
+    {
+        // #823: a caller outside the standard Microsoft.Extensions.AI pipeline can hand parametersJson over
+        // as an object shape the governance read does not recognize (here a JsonNode). Governance used to
+        // see "no parameters" and pass the call, while the tool's own binding serialized the same object
+        // into a real path. Whatever the tool would have read, it must not run under a scoped profile.
+        var (_, fileSystem, toolProvider) = BuildToolFixture();
+        var context = Mock.Of<IAgentExecutionContext>(c => c.AgentId == "test-agent");
+        var (governor, _) = BuildGovernor(toolProvider, DenyingSandboxConfig(), context);
+
+        var builder = new ToolChainBuilder(
+            NullLogger<ToolChainBuilder>.Instance, toolProvider, new AIToolConverter(NullLogger<AIToolConverter>.Instance));
+        var aiFunction = (AIFunction)builder.BuildToolsByName(["file_system"], "test-agent").Single();
+
+        using var _ = ToolAdmissionAccessor.Begin(AdmissionHarness.Pipeline(governor: governor, executionContext: context));
+
+        var args = new AIFunctionArguments
+        {
+            ["operation"] = "read",
+            ["parametersJson"] = new System.Text.Json.Nodes.JsonObject { ["path"] = DeniedPath }
+        };
+
+        await aiFunction.InvokeAsync(args);
+
+        fileSystem.Verify(fs => fs.ReadFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AgentTurnPath_UnscopedProfile_ParametersJsonArrivesAsAJsonNode_StillRuns()
+    {
+        // Control for the test above: refusing an unreadable shape is only correct when scoping is
+        // configured. An unscoped profile has nothing to enforce, so the same call must still run.
+        var (_, fileSystem, toolProvider) = BuildToolFixture();
+        var context = Mock.Of<IAgentExecutionContext>(c => c.AgentId == "test-agent");
+        var (governor, _) = BuildGovernor(toolProvider, new SandboxConfig(), context);
+
+        var builder = new ToolChainBuilder(
+            NullLogger<ToolChainBuilder>.Instance, toolProvider, new AIToolConverter(NullLogger<AIToolConverter>.Instance));
+        var aiFunction = (AIFunction)builder.BuildToolsByName(["file_system"], "test-agent").Single();
+
+        using var _ = ToolAdmissionAccessor.Begin(AdmissionHarness.Pipeline(governor: governor, executionContext: context));
+
+        var args = new AIFunctionArguments
+        {
+            ["operation"] = "read",
+            ["parametersJson"] = new System.Text.Json.Nodes.JsonObject { ["path"] = "workspace/notes.txt" }
+        };
+
+        await aiFunction.InvokeAsync(args);
+
+        fileSystem.Verify(fs => fs.ReadFileAsync("workspace/notes.txt", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task AgentTurnPath_DeniedPath_RefusesBeforeFileSystemServiceReached()
     {
         var (_, fileSystem, toolProvider) = BuildToolFixture();
