@@ -131,14 +131,91 @@ public sealed class ResourceParameterExtractorTests
         result!.RequestedPaths.Should().BeEmpty();
     }
 
-    [Fact]
-    public void Extract_DeclaredParameterIsNonStringValue_IsIgnored()
+    public static TheoryData<object> NonStringValues => new()
     {
+        42L,
+        0L,
+        3.14,
+        true,
+        false,
+    };
+
+    [Theory]
+    [MemberData(nameof(NonStringValues))]
+    public void Extract_DeclaredPathParameterIsNonStringValue_ReturnsNullUnknown(object value)
+    {
+        // #604: a present-but-wrong-typed value (a JSON number or bool from a corrupted or adversarial
+        // upstream) is not "nothing to check". Returning an empty request here let CapabilityEnforcer see
+        // Count == 0 and pass the call even with AllowedPaths/DeniedPaths configured. Null is the existing
+        // "resource usage unknown" signal, which the enforcer refuses when scoping is configured.
         var result = ResourceParameterExtractor.Extract(
-            "read", new Dictionary<string, object?> { ["path"] = 42L }, FileSystemMap);
+            "read", new Dictionary<string, object?> { ["path"] = value }, FileSystemMap);
+
+        result.Should().BeNull();
+    }
+
+    [Theory]
+    [MemberData(nameof(NonStringValues))]
+    public void Extract_DeclaredHostParameterIsNonStringValue_ReturnsNullUnknown(object value)
+    {
+        // Symmetric with the Path case: the refusal applies to every declared resource kind.
+        var map = new Dictionary<string, IReadOnlyDictionary<string, ResourceParameterKind>>
+        {
+            ["fetch"] = new Dictionary<string, ResourceParameterKind> { ["url_host"] = ResourceParameterKind.Host }
+        };
+
+        var result = ResourceParameterExtractor.Extract(
+            "fetch", new Dictionary<string, object?> { ["url_host"] = value }, map);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void Extract_OneValidAndOneNonStringDeclaredParameter_ReturnsNullUnknown()
+    {
+        // A well-formed sibling must not vouch for the malformed one: the call is refused as a whole.
+        var map = new Dictionary<string, IReadOnlyDictionary<string, ResourceParameterKind>>
+        {
+            ["copy"] = new Dictionary<string, ResourceParameterKind>
+            {
+                ["source"] = ResourceParameterKind.Path,
+                ["destination"] = ResourceParameterKind.Path,
+            }
+        };
+
+        var result = ResourceParameterExtractor.Extract(
+            "copy",
+            new Dictionary<string, object?> { ["source"] = "src/File.cs", ["destination"] = 7L },
+            map);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void Extract_DeclaredParameterIsExplicitNull_IsTreatedAsAbsent()
+    {
+        // JSON null carries no path or host, and an omitted parameter is already "absent" (returns an
+        // empty request). The two reach the tool identically, so they are treated identically; refusing
+        // null would break every call that sends an optional path as null.
+        var result = ResourceParameterExtractor.Extract(
+            "read", new Dictionary<string, object?> { ["path"] = null }, FileSystemMap);
 
         result.Should().NotBeNull();
         result!.RequestedPaths.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Extract_NonStringValueForUndeclaredParameter_IsIgnored()
+    {
+        // Only parameters the tool declares as paths or hosts are inspected; an unrelated numeric
+        // argument (a line count, a limit) must not cause a refusal.
+        var result = ResourceParameterExtractor.Extract(
+            "read",
+            new Dictionary<string, object?> { ["path"] = "src/File.cs", ["max_lines"] = 100L },
+            FileSystemMap);
+
+        result.Should().NotBeNull();
+        result!.RequestedPaths.Should().ContainSingle().Which.Should().Be("src/File.cs");
     }
 
     [Fact]

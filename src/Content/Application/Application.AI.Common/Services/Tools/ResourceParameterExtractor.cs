@@ -21,7 +21,8 @@ public static class ResourceParameterExtractor
     /// </param>
     /// <returns>
     /// <see langword="null"/> when the tool declares nothing, <paramref name="operation"/> could not
-    /// be read, or <paramref name="operation"/> does not match any operation the tool declares —
+    /// be read, <paramref name="operation"/> does not match any operation the tool declares, or a
+    /// declared path/host parameter carries a non-string, non-null value (#604) —
     /// resource usage for this call is unknown, and <c>CapabilityEnforcer</c> must treat that as a
     /// reason to refuse when scoping is configured, not as "nothing to check". An operation string
     /// that fails to match anything is exactly as unknown as a missing one: both could be an
@@ -65,10 +66,20 @@ public static class ResourceParameterExtractor
             // absent one. Excluding it here would drop it from the request entirely, and
             // CapabilityEnforcer treats an empty request as "nothing to check" and passes it —
             // silently bypassing scoping instead of letting the empty value reach path/host
-            // validation, which correctly denies it as unparsable. Only a non-string value (including
-            // null) means no usable value was supplied.
-            if (value is not string text)
+            // validation, which correctly denies it as unparsable.
+            //
+            // A JSON null is the one non-string that means "no value supplied": it reaches the tool
+            // exactly as an omitted parameter does, which is already treated as absent above.
+            if (value is null)
                 continue;
+
+            // Any other non-string (#604) is a present value of the wrong type — a number or bool from
+            // a corrupted or adversarial producer. Skipping it would leave RequestedPaths empty, which
+            // CapabilityEnforcer reads as "nothing to check" and passes. Return null instead: resource
+            // usage for this call is unknown, so scoping, when configured, refuses it. The whole call
+            // is refused, not just this parameter, so a well-formed sibling cannot vouch for it.
+            if (value is not string text)
+                return null;
 
             switch (kind)
             {

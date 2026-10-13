@@ -13,6 +13,16 @@ namespace Infrastructure.AI.Agents;
 /// <see cref="BackgroundServices.AgentManifestWatcherService"/> computes the same set of
 /// watch roots the registry scans, rather than two independent implementations of "which
 /// folders" silently drifting apart.
+/// <para>
+/// <b>Deliberately uses a plain <see cref="Directory.Exists(string?)"/>, unlike
+/// <c>SkillSearchPathResolver</c>, which routes through the sandboxed <c>ISkillFileReader</c> (#710).</b>
+/// Skill roots are extended at runtime by plugins, so their existence check must be confined. Agent
+/// roots have no runtime writer: <see cref="AgentsConfig.BasePath"/> and
+/// <see cref="AgentsConfig.AdditionalPaths"/> are init-only and come only from host configuration, which
+/// <c>AgentSearchPathTrustBoundaryTests</c> pins. Do not point <c>ISkillFileReader</c> at agent roots —
+/// its sandbox is the skill roots, so it would refuse every agent directory. If agent roots ever become
+/// runtime-extensible, sandbox this resolver and the registry's directory walk together first.
+/// </para>
 /// </remarks>
 internal static class AgentSearchPathResolver
 {

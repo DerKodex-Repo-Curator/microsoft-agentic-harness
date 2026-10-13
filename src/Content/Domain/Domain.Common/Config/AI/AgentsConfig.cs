@@ -8,6 +8,15 @@ namespace Domain.Common.Config.AI;
 /// Mirrors <see cref="SkillsConfig"/> in shape. Agents and skills are kept on separate paths
 /// because they are distinct concepts: agents are top-level orchestrators declared by <c>AGENT.md</c>,
 /// while skills are procedural units declared by <c>SKILL.md</c>.
+/// <para>
+/// <b>Unlike <see cref="SkillsConfig"/>, the path properties here are init-only.</b> Skill roots are
+/// extended at runtime (plugins append their skill directories), which is why skill discovery checks
+/// them through a sandboxed reader. Agent roots have no runtime writer: they come only from host
+/// configuration, which is what makes the plain existence check in <c>AgentSearchPathResolver</c>
+/// acceptable (#710). Init-only lets the compiler enforce that premise. If agent roots ever need to be
+/// added at runtime, sandbox the resolver and the registry's directory walk first instead of making
+/// these settable.
+/// </para>
 /// </remarks>
 public class AgentsConfig
 {
@@ -16,13 +25,13 @@ public class AgentsConfig
     /// or a parent folder containing multiple agent subdirectories. Relative paths are resolved
     /// from the application's working directory.
     /// </summary>
-    public string? BasePath { get; set; }
+    public string? BasePath { get; init; }
 
     /// <summary>
     /// Additional paths to search beyond <see cref="BasePath"/>. Useful for combining built-in
-    /// agents with tenant- or environment-specific agents at runtime.
+    /// agents with tenant- or environment-specific agents, supplied through host configuration.
     /// </summary>
-    public IReadOnlyList<string> AdditionalPaths { get; set; } = [];
+    public IReadOnlyList<string> AdditionalPaths { get; init; } = [];
 
     /// <summary>
     /// All configured paths, <see cref="BasePath"/> first followed by <see cref="AdditionalPaths"/>.

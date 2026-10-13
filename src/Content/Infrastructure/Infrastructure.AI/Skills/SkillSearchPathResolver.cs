@@ -17,8 +17,9 @@ namespace Infrastructure.AI.Skills;
 /// <para>
 /// <b>Deliberately routes existence checks through <see cref="ISkillFileReader"/>, not raw
 /// <see cref="Directory.Exists(string)"/>.</b> This is NOT the same shape as
-/// <c>AgentSearchPathResolver</c>, which uses raw <c>Directory.Exists</c> (a known, separately-
-/// tracked gap — issue #710). Skill discovery has always been sandboxed (issue #247): every
+/// <c>AgentSearchPathResolver</c>, which uses raw <c>Directory.Exists</c> on purpose: agent roots come
+/// only from host configuration, while plugins append skill roots at runtime (issue #710). Skill
+/// discovery has always been sandboxed (issue #247): every
 /// filesystem check confines the walk to the configured skill roots so it cannot be led outside
 /// them. Downgrading this resolver to raw <c>Directory.Exists</c> to look more like the agent
 /// side would regress that containment — do not do it.
