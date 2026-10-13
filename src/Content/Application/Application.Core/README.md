@@ -129,7 +129,7 @@ foreach (var subResult in result.SubAgentResults)
 Console.WriteLine(result.FinalSynthesis);
 ```
 
-**Phase 1 -- Planning:** The orchestrator receives the task + a catalog of available sub-agents and returns a typed `OrchestrationPlan` (a list of `{ agent, description }` subtasks) through `IStructuredOutputInvoker`, which allows one repair attempt for a malformed reply. A plan that still cannot be read, is empty, or names an agent that is not available fails the task with a stable code (`orchestration.plan_invalid`, `orchestration.plan_empty`, `orchestration.plan_unknown_agent`) rather than running a partial or guessed plan.
+**Phase 1 -- Planning:** The orchestrator receives the task + a catalog of available sub-agents and returns a typed `OrchestrationPlan` (a list of `{ agent, description }` subtasks) through `IStructuredOutputInvoker`, which allows one repair attempt for a malformed reply. A plan that still cannot be read, is empty, or names an agent that is not available fails the task with a stable code (`orchestration.plan_invalid`, `orchestration.plan_empty`, `orchestration.plan_unknown_agent`) rather than running a partial or guessed plan. If the planning call itself fails (provider error, content-safety block, unsupported schema request) the task fails with `orchestration.plan_unavailable` instead.
 
 **Phase 2 -- Delegation:** The handler runs `RunConversationCommand` for each planned sub-agent with its subtask as the user message.
 

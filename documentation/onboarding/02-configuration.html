@@ -560,6 +560,9 @@
                                 <td>
                                     Azure OpenAI resource URL (e.g.
                                     <code>https://my-resource.openai.azure.com/</code>). Leave blank for plain OpenAI.
+                                    The client calls the resource's <code>/openai/v1/</code> route with the key as a bearer
+                                    credential, so the URL must be https with no query string, and any gateway in front of
+                                    the resource must serve that route.
                                     <strong>Always stored in User Secrets / Key Vault, never in JSON.</strong>
                                 </td>
                             </tr>
