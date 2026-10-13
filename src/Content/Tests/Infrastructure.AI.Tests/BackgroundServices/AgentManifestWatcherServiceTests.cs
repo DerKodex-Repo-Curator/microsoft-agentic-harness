@@ -7,7 +7,6 @@ using Infrastructure.AI.BackgroundServices;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
-using Tests.Common;
 using Xunit;
 
 namespace Infrastructure.AI.Tests.BackgroundServices;
@@ -59,7 +58,6 @@ public sealed class AgentManifestWatcherServiceTests : IDisposable
         var service = new AgentManifestWatcherService(
             new StaticOptionsMonitor(appConfig),
             _refresher,
-            new UnsandboxedSkillFileReader(),
             _timeProvider,
             NullLogger<AgentManifestWatcherService>.Instance);
 
@@ -169,7 +167,7 @@ public sealed class AgentManifestWatcherServiceTests : IDisposable
         };
         var refresher = new FakeRefresher();
         var service = new AgentManifestWatcherService(
-            new StaticOptionsMonitor(appConfig), refresher, new UnsandboxedSkillFileReader(), TimeProvider.System,
+            new StaticOptionsMonitor(appConfig), refresher, TimeProvider.System,
             NullLogger<AgentManifestWatcherService>.Instance);
         _created.Add(service);
 

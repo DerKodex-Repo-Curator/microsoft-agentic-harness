@@ -69,8 +69,13 @@ public static class ResourceParameterExtractor
 
         foreach (var (parameterName, kind) in declaredParameters)
         {
-            if (parameters is null || !parameters.TryGetValue(parameterName, out var value))
+            if (parameters is null || !parameters.TryGetValue(parameterName, out var rawValue))
                 continue;
+
+            // A string-valued JsonElement is a string. Callers normalize before calling, but this routine is
+            // public and shared, and leaving the invariant to each caller would turn a future producer's
+            // boxed JsonElement string into a spurious refusal of every scoped call.
+            var value = ToolParameters.NormalizeScalar(rawValue);
 
             // Length is deliberately NOT checked here (#595 code-review): a declared parameter that
             // resolves to a genuinely empty string is a present-but-invalid path/host value, not an

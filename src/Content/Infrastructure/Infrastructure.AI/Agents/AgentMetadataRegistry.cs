@@ -300,8 +300,7 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
     /// </summary>
     private (Dictionary<string, AgentDefinition> Agents, bool HadEnumerationErrors) Discover()
     {
-        var resolvedPaths = AgentSearchPathResolver.Resolve(
-            _appConfig.CurrentValue.AI?.Agents, _skillFileReader, _logger);
+        var resolvedPaths = AgentSearchPathResolver.Resolve(_appConfig.CurrentValue.AI?.Agents, _logger);
         _searchedPaths = resolvedPaths;
 
         var result = new Dictionary<string, AgentDefinition>(StringComparer.OrdinalIgnoreCase);

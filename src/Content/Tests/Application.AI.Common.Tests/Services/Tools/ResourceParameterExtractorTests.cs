@@ -222,6 +222,20 @@ public sealed class ResourceParameterExtractorTests
     }
 
     [Fact]
+    public void Extract_JsonElementString_IsUnwrappedNotRefused()
+    {
+        // A string-valued JsonElement is a path like any other. Refusing it would turn a future
+        // producer's boxed element into a spurious denial of every scoped call.
+        using var document = JsonDocument.Parse("\"src/File.cs\"");
+
+        var result = ResourceParameterExtractor.Extract(
+            "read", new Dictionary<string, object?> { ["path"] = document.RootElement.Clone() }, FileSystemMap);
+
+        result.Should().NotBeNull();
+        result!.RequestedPaths.Should().ContainSingle().Which.Should().Be("src/File.cs");
+    }
+
+    [Fact]
     public void Extract_JsonElementNullOrUndefined_IsTreatedAsAbsent()
     {
         // JSON null reaches the extractor as CLR null on the agent-turn path and as a JsonElement of kind

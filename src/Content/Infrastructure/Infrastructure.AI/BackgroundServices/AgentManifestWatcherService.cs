@@ -1,6 +1,5 @@
 using System.Threading;
 using Application.AI.Common.Interfaces;
-using Application.AI.Common.Interfaces.Skills;
 using Domain.Common.Config;
 using Domain.Common.Config.AI;
 using Infrastructure.AI.Agents;
@@ -51,7 +50,6 @@ public sealed class AgentManifestWatcherService : BackgroundService
 {
     private readonly IOptionsMonitor<AppConfig> _appConfig;
     private readonly IAgentRegistryRefresher _refresher;
-    private readonly ISkillFileReader _fileReader;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentManifestWatcherService> _logger;
 
@@ -74,29 +72,21 @@ public sealed class AgentManifestWatcherService : BackgroundService
     /// <summary>Initialises the watcher with its dependencies. Touches no filesystem state.</summary>
     /// <param name="appConfig">Monitor over the live application configuration (agent search paths and watch settings).</param>
     /// <param name="refresher">The registry seam this service invalidates on a detected change.</param>
-    /// <param name="fileReader">
-    /// Sandboxed reader used only for resolving which roots to watch (issue #247, #710), matching the
-    /// registry so both compute the same roots. The watcher itself still operates on raw absolute
-    /// paths once resolved, since <see cref="FileSystemWatcher"/> has no sandboxed variant.
-    /// </param>
     /// <param name="timeProvider">Drives the debounce timer — injected so the schedule is testable.</param>
     /// <param name="logger">Logger for watcher lifecycle and change diagnostics.</param>
     public AgentManifestWatcherService(
         IOptionsMonitor<AppConfig> appConfig,
         IAgentRegistryRefresher refresher,
-        ISkillFileReader fileReader,
         TimeProvider timeProvider,
         ILogger<AgentManifestWatcherService> logger)
     {
         ArgumentNullException.ThrowIfNull(appConfig);
         ArgumentNullException.ThrowIfNull(refresher);
-        ArgumentNullException.ThrowIfNull(fileReader);
         ArgumentNullException.ThrowIfNull(timeProvider);
         ArgumentNullException.ThrowIfNull(logger);
 
         _appConfig = appConfig;
         _refresher = refresher;
-        _fileReader = fileReader;
         _timeProvider = timeProvider;
         _logger = logger;
     }
@@ -170,7 +160,7 @@ public sealed class AgentManifestWatcherService : BackgroundService
             return;
         }
 
-        var resolvedPaths = AgentSearchPathResolver.Resolve(agentsConfig, _fileReader, _logger);
+        var resolvedPaths = AgentSearchPathResolver.Resolve(agentsConfig, _logger);
 
         lock (_watchersLock)
         {
@@ -219,7 +209,7 @@ public sealed class AgentManifestWatcherService : BackgroundService
                 }
                 catch (Exception ex)
                 {
-                    // A path that exists (AgentSearchPathResolver already checked the directory exists)
+                    // A path that exists (AgentSearchPathResolver already checked Directory.Exists)
                     // can still fail here — a network share or container-mounted volume that doesn't
                     // support native change notifications, or a permissions edge case. This runs
                     // inside a BackgroundService, whose unhandled exceptions stop the ENTIRE host by
