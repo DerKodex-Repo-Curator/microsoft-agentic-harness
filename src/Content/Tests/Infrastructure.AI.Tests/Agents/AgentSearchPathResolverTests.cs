@@ -1,7 +1,10 @@
+using Application.AI.Common.Exceptions;
+using Application.AI.Common.Interfaces.Skills;
 using Domain.Common.Config.AI;
 using FluentAssertions;
 using Infrastructure.AI.Agents;
 using Microsoft.Extensions.Logging.Abstractions;
+using Tests.Common;
 using Xunit;
 
 namespace Infrastructure.AI.Tests.Agents;
@@ -32,7 +35,7 @@ public sealed class AgentSearchPathResolverTests
                 AdditionalPaths = ["\0not-a-valid-path"]
             };
 
-            var resolved = AgentSearchPathResolver.Resolve(config, NullLogger.Instance);
+            var resolved = AgentSearchPathResolver.Resolve(config, new UnsandboxedSkillFileReader(), NullLogger.Instance);
 
             resolved.Should().ContainSingle().Which.Should().Be(validPath);
         }
@@ -45,7 +48,8 @@ public sealed class AgentSearchPathResolverTests
     [Fact]
     public void Resolve_NoPathsConfigured_ReturnsEmpty()
     {
-        var resolved = AgentSearchPathResolver.Resolve(new AgentsConfig(), NullLogger.Instance);
+        var resolved = AgentSearchPathResolver.Resolve(
+            new AgentsConfig(), new UnsandboxedSkillFileReader(), NullLogger.Instance);
 
         resolved.Should().BeEmpty();
     }
@@ -53,7 +57,7 @@ public sealed class AgentSearchPathResolverTests
     [Fact]
     public void Resolve_NullConfig_ReturnsEmpty()
     {
-        var resolved = AgentSearchPathResolver.Resolve(null, NullLogger.Instance);
+        var resolved = AgentSearchPathResolver.Resolve(null, new UnsandboxedSkillFileReader(), NullLogger.Instance);
 
         resolved.Should().BeEmpty();
     }
@@ -64,8 +68,39 @@ public sealed class AgentSearchPathResolverTests
         var missingPath = Path.Combine(Path.GetTempPath(), $"agents-resolver-missing-{Guid.NewGuid():N}");
 
         var resolved = AgentSearchPathResolver.Resolve(
-            new AgentsConfig { BasePath = missingPath }, NullLogger.Instance);
+            new AgentsConfig { BasePath = missingPath }, new UnsandboxedSkillFileReader(), NullLogger.Instance);
 
         resolved.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Resolve_ChecksExistenceThroughTheSandboxedReader_NotRawDirectoryExists()
+    {
+        // #710: agent discovery must consult the same sandboxed reader as skill discovery, so a later
+        // hardening of the reader's path rules reaches agent roots instead of stopping at the skill side.
+        var realPath = Path.Combine(Path.GetTempPath(), $"agents-resolver-sandboxed-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(realPath);
+        try
+        {
+            var act = () => AgentSearchPathResolver.Resolve(
+                new AgentsConfig { BasePath = realPath }, new AlwaysRefusingReader(), NullLogger.Instance);
+
+            act.Should().Throw<SkillPathRefusedException>(
+                "the resolver must consult the sandboxed reader for existence, not bypass it via raw Directory.Exists");
+        }
+        finally
+        {
+            Directory.Delete(realPath, recursive: true);
+        }
+    }
+
+    private sealed class AlwaysRefusingReader : ISkillFileReader
+    {
+        public string ReadText(string path) => throw new SkillPathRefusedException(path);
+        public Task<string> ReadTextAsync(string path, CancellationToken cancellationToken = default) =>
+            throw new SkillPathRefusedException(path);
+        public bool FileExists(string path) => throw new SkillPathRefusedException(path);
+        public bool DirectoryExists(string path) => throw new SkillPathRefusedException(path);
+        public IReadOnlyList<string> EnumerateDirectories(string path) => throw new SkillPathRefusedException(path);
     }
 }

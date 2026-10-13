@@ -1,3 +1,4 @@
+using Application.AI.Common.Interfaces.Skills;
 using Domain.Common.Config.AI;
 using Infrastructure.AI.Skills;
 using Microsoft.Extensions.Logging;
@@ -14,14 +15,17 @@ namespace Infrastructure.AI.Agents;
 /// watch roots the registry scans, rather than two independent implementations of "which
 /// folders" silently drifting apart.
 /// <para>
-/// <b>Deliberately uses a plain <see cref="Directory.Exists(string?)"/>, unlike
-/// <c>SkillSearchPathResolver</c>, which routes through the sandboxed <c>ISkillFileReader</c> (#710).</b>
-/// Skill roots are extended at runtime by plugins, so their existence check must be confined. Agent
-/// roots have no runtime writer: <see cref="AgentsConfig.BasePath"/> and
-/// <see cref="AgentsConfig.AdditionalPaths"/> are init-only and come only from host configuration, which
-/// <c>AgentSearchPathTrustBoundaryTests</c> pins. Do not point <c>ISkillFileReader</c> at agent roots —
-/// its sandbox is the skill roots, so it would refuse every agent directory. If agent roots ever become
-/// runtime-extensible, sandbox this resolver and the registry's directory walk together first.
+/// <b>Routes the existence check through <see cref="ISkillFileReader"/>, as
+/// <c>SkillSearchPathResolver</c> does (#710).</b> The reader's sandbox is built from
+/// <c>SkillContentRoots</c>, which includes the agent roots, so a configured agent root passes; one
+/// that points into a protected location is refused with <c>SkillPathRefusedException</c> rather than
+/// quietly scanned. Sharing the reader means a later hardening of its path rules reaches agent
+/// discovery too instead of leaving it on a weaker check.
+/// </para>
+/// <para>
+/// <b>What this does not cover.</b> Because the sandbox is built from these same configured roots, the
+/// root check is mostly a consistency measure, not containment. The registry's own directory walk
+/// and <c>AGENT.md</c> read still use the file system directly (tracked separately).
 /// </para>
 /// </remarks>
 internal static class AgentSearchPathResolver
@@ -31,15 +35,20 @@ internal static class AgentSearchPathResolver
     /// <see cref="AppContext.BaseDirectory"/> (relative paths are resolved from the bin folder so
     /// they match where csproj Content Include copies agents at build time, rather than coupling to
     /// the process CWD, which differs between <c>dotnet run</c> and a published deployment) and
-    /// filters to directories that actually exist. A configured path that does not exist is logged
+    /// filters to directories that actually exist, checked through <paramref name="fileReader"/> so
+    /// the sandbox boundary is preserved. A configured path that does not exist is logged
     /// and skipped, never treated as an error — a template consumer's unused
     /// <c>AdditionalPaths</c> entry must not break discovery of everything else.
     /// </summary>
     /// <param name="agentsConfig">The configured agent search paths, or <see langword="null"/>.</param>
+    /// <param name="fileReader">Sandboxed reader used for the existence check (issue #247).</param>
     /// <param name="logger">Logger for path-resolution diagnostics.</param>
     /// <returns>The absolute, existing directories to scan. Empty when none are configured or none exist.</returns>
-    public static IReadOnlyList<string> Resolve(AgentsConfig? agentsConfig, ILogger logger)
+    public static IReadOnlyList<string> Resolve(
+        AgentsConfig? agentsConfig, ISkillFileReader fileReader, ILogger logger)
     {
+        ArgumentNullException.ThrowIfNull(fileReader);
+
         var paths = agentsConfig?.AllPaths.ToList() ?? [];
         if (paths.Count == 0)
         {
@@ -69,7 +78,7 @@ internal static class AgentSearchPathResolver
                 continue;
             }
 
-            if (Directory.Exists(abs))
+            if (fileReader.DirectoryExists(abs))
                 resolved.Add(abs);
             else
                 logger.LogWarning("Agent path not found, skipping: {Path}", abs);

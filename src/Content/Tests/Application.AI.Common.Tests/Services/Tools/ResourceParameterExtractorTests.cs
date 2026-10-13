@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Application.AI.Common.Services.Tools;
 using Domain.AI.Sandbox;
 using FluentAssertions;
@@ -202,6 +203,40 @@ public sealed class ResourceParameterExtractorTests
 
         result.Should().NotBeNull();
         result!.RequestedPaths.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Extract_JsonElementNonStringValues_ReturnNullUnknown()
+    {
+        // The plan-step path hands the extractor boxed JsonElements, not the CLR scalars the agent-turn
+        // path produces. Every non-string kind must be refused there too.
+        foreach (var json in new[] { "42", "3.14", "true", "false", "[\"a\"]", "{\"p\":1}" })
+        {
+            using var document = JsonDocument.Parse(json);
+
+            var result = ResourceParameterExtractor.Extract(
+                "read", new Dictionary<string, object?> { ["path"] = document.RootElement.Clone() }, FileSystemMap);
+
+            result.Should().BeNull($"a JsonElement of {document.RootElement.ValueKind} ({json}) is not a usable path");
+        }
+    }
+
+    [Fact]
+    public void Extract_JsonElementNullOrUndefined_IsTreatedAsAbsent()
+    {
+        // JSON null reaches the extractor as CLR null on the agent-turn path and as a JsonElement of kind
+        // Null on the plan-step path. The two must agree, or the same payload is accepted on one path and
+        // refused on the other.
+        using var document = JsonDocument.Parse("null");
+
+        foreach (var value in new object[] { document.RootElement.Clone(), default(JsonElement) })
+        {
+            var result = ResourceParameterExtractor.Extract(
+                "read", new Dictionary<string, object?> { ["path"] = value }, FileSystemMap);
+
+            result.Should().NotBeNull();
+            result!.RequestedPaths.Should().BeEmpty();
+        }
     }
 
     [Fact]

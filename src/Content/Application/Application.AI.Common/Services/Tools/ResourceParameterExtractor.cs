@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Domain.AI.Sandbox;
 
 namespace Application.AI.Common.Services.Tools;
@@ -5,9 +6,10 @@ namespace Application.AI.Common.Services.Tools;
 /// <summary>
 /// The single routine that turns a tool's own <c>ResourceParametersByOperation</c> declaration plus
 /// one call's already-flattened parameters into a <see cref="ToolCallResourceRequest"/> — shared by
-/// both entry points a tool call reaches governance from (#418): the agent-turn path
-/// (<see cref="GovernedAIFunction"/>, which flattens its raw JSON arguments first) and the
-/// direct-invoke HTTP path (<c>DirectToolInvoker</c>, whose parameters are already flat).
+/// the three entry points a tool call reaches governance from (#418): the agent-turn path
+/// (<see cref="GovernedAIFunction"/>, which flattens its raw JSON arguments first), the
+/// direct-invoke HTTP path (<c>DirectToolInvoker</c>, whose parameters are already flat) and the
+/// plan-step path (<c>ToolUseStepExecutor</c>, which normalizes its step arguments first).
 /// </summary>
 public static class ResourceParameterExtractor
 {
@@ -20,21 +22,30 @@ public static class ResourceParameterExtractor
     /// The tool's own declaration (<c>ITool.ResourceParametersByOperation</c>).
     /// </param>
     /// <returns>
-    /// <see langword="null"/> when the tool declares nothing, <paramref name="operation"/> could not
-    /// be read, <paramref name="operation"/> does not match any operation the tool declares, or a
-    /// declared path/host parameter carries a non-string, non-null value (#604) —
-    /// resource usage for this call is unknown, and <c>CapabilityEnforcer</c> must treat that as a
-    /// reason to refuse when scoping is configured, not as "nothing to check". An operation string
-    /// that fails to match anything is exactly as unknown as a missing one: both could be an
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <see langword="null"/> — resource usage for this call is <b>unknown</b>, and
+    ///     <c>CapabilityEnforcer</c> must treat that as a reason to refuse when scoping is configured,
+    ///     not as "nothing to check". It is returned when the tool declares nothing, when
+    ///     <paramref name="operation"/> could not be read, when it matches no operation the tool
+    ///     declares, or when a declared path/host parameter carries a non-string, non-null value
+    ///     (#604).
+    ///   </description></item>
+    ///   <item><description>
+    ///     <see cref="ToolCallResourceRequest.Empty"/> — only when the tool affirmatively recognizes
+    ///     <paramref name="operation"/> and declares no resource parameters for it.
+    ///   </description></item>
+    ///   <item><description>
+    ///     Otherwise, the paths/hosts found among <paramref name="parameters"/> for this operation's
+    ///     declared keys. A declared key that is absent or null contributes nothing.
+    ///   </description></item>
+    /// </list>
+    /// An unmatched operation string is exactly as unknown as a missing one: both could be an
     /// upstream-corrupted value (#587 — historically, a plan step's merged arguments could carry raw,
-    /// quote-wrapped JSON text for an upstream-sourced string value; #595 fixed that specific
-    /// mechanism for the plan-step path, but this method has no way to know which caller produced
-    /// <paramref name="operation"/> or whether some other path still can) as easily as a genuinely
-    /// unrecognized name, and treating either as "nothing to check" would silently allow a call this
+    /// quote-wrapped JSON text for an upstream-sourced string value; #595 fixed that mechanism for the
+    /// plan-step path, but this method cannot know which caller produced the value or whether some other
+    /// path still can), and treating either as "nothing to check" would silently allow a call this
     /// method has no basis to vouch for.
-    /// <see cref="ToolCallResourceRequest.Empty"/> only when the tool affirmatively recognizes
-    /// <paramref name="operation"/> and declares no resource parameters for it. Otherwise the
-    /// paths/hosts found among <paramref name="parameters"/> for this operation's declared keys.
     /// </returns>
     public static ToolCallResourceRequest? Extract(
         string? operation,
@@ -69,8 +80,10 @@ public static class ResourceParameterExtractor
             // validation, which correctly denies it as unparsable.
             //
             // A JSON null is the one non-string that means "no value supplied": it reaches the tool
-            // exactly as an omitted parameter does, which is already treated as absent above.
-            if (value is null)
+            // exactly as an omitted parameter does, which is already treated as absent above. It
+            // arrives as a CLR null from the agent-turn path (ToolParameters.Flatten) and as a boxed
+            // JsonElement of kind Null/Undefined from the plan-step path, so both are absent.
+            if (value is null or JsonElement { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined })
                 continue;
 
             // Any other non-string (#604) is a present value of the wrong type — a number or bool from

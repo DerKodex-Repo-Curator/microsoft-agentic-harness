@@ -161,6 +161,35 @@ public sealed class ToolPathScopingEndToEndTests
     }
 
     [Fact]
+    public async Task AgentTurnPath_ScopedProfile_PathArrivesAsNumber_RefusesAsUnknownResourceUsage()
+    {
+        // #604: a declared path parameter carrying a JSON number used to be skipped by the extractor,
+        // leaving an empty request that CapabilityEnforcer reads as "nothing to check". With scoping
+        // configured the call must now be refused, and refused by governance, not by the tool.
+        var (_, fileSystem, toolProvider) = BuildToolFixture();
+        var context = Mock.Of<IAgentExecutionContext>(c => c.AgentId == "test-agent");
+        var (governor, trace) = BuildGovernor(toolProvider, DenyingSandboxConfig(), context);
+
+        var builder = new ToolChainBuilder(
+            NullLogger<ToolChainBuilder>.Instance, toolProvider, new AIToolConverter(NullLogger<AIToolConverter>.Instance));
+        var aiFunction = (AIFunction)builder.BuildToolsByName(["file_system"], "test-agent").Single();
+
+        using var _ = ToolAdmissionAccessor.Begin(AdmissionHarness.Pipeline(governor: governor, executionContext: context));
+
+        var args = new AIFunctionArguments
+        {
+            ["operation"] = "read",
+            ["parametersJson"] = JsonSerializer.SerializeToElement(new { path = 42 })
+        };
+
+        var result = await aiFunction.InvokeAsync(args);
+
+        result.Should().BeOfType<string>();
+        trace.Snapshot().ToolDecisions.Should().ContainSingle(d => d.Reason.Contains("could be determined"));
+        fileSystem.Verify(fs => fs.ReadFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task AgentTurnPath_DeniedPath_RefusesBeforeFileSystemServiceReached()
     {
         var (_, fileSystem, toolProvider) = BuildToolFixture();
