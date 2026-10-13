@@ -18,10 +18,8 @@ namespace Infrastructure.AI.Agents;
 /// <c>SkillSearchPathResolver</c>, which asks the sandboxed <c>ISkillFileReader</c> (#710).</b> The
 /// reader's sandbox is built from <c>SkillContentRoots</c>, which already includes the agent roots, so
 /// a configured root always passes its own sandbox: routing this check through it would never refuse
-/// anything. It would add failure modes instead — the guard rejects a rooted path containing
-/// <c>..</c> or shell metacharacters with <see cref="ArgumentException"/>, and a refusal escapes as
-/// <c>SkillPathRefusedException</c> from the registry and the watcher. The containment that matters is
-/// the directory walk and the <c>AGENT.md</c> read, which are not yet sandboxed (tracked in #822).
+/// anything, and would add new ways for the registry and watcher to throw. The containment that
+/// matters is the directory walk and the <c>AGENT.md</c> read, which are not yet sandboxed (#822).
 /// </para>
 /// </remarks>
 internal static class AgentSearchPathResolver

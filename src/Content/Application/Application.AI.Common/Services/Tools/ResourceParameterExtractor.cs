@@ -84,18 +84,14 @@ public static class ResourceParameterExtractor
             // silently bypassing scoping instead of letting the empty value reach path/host
             // validation, which correctly denies it as unparsable.
             //
-            // A JSON null is the one non-string that means "no value supplied": it reaches the tool
-            // exactly as an omitted parameter does, which is already treated as absent above. It
-            // arrives as a CLR null from the agent-turn path (ToolParameters.Flatten) and as a boxed
-            // JsonElement of kind Null/Undefined from the plan-step path, so both are absent.
+            // JSON null means "no value supplied", exactly like an omitted parameter. It arrives as a CLR
+            // null on the agent-turn path and as a JsonElement of kind Null/Undefined on the plan-step path.
             if (value is null or JsonElement { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined })
                 continue;
 
-            // Any other non-string (#604) is a present value of the wrong type — a number or bool from
-            // a corrupted or adversarial producer. Skipping it would leave RequestedPaths empty, which
-            // CapabilityEnforcer reads as "nothing to check" and passes. Return null instead: resource
-            // usage for this call is unknown, so scoping, when configured, refuses it. The whole call
-            // is refused, not just this parameter, so a well-formed sibling cannot vouch for it.
+            // Any other non-string (#604) is a present value of the wrong type. Skipping it would leave the
+            // request empty, which CapabilityEnforcer reads as "nothing to check". Return null (usage
+            // unknown) so configured scoping refuses the whole call; a valid sibling cannot vouch for it.
             if (value is not string text)
                 return null;
 
