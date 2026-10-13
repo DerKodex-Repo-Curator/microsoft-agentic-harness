@@ -158,7 +158,7 @@ public sealed class FileSystemDiscoveryOverlapStartupValidatorTests : IDisposabl
         // A path that cannot be fully resolved cannot be shown not to overlap, so it is a refusal. The chain is
         // built tail-first so each link points at one that already exists.
         var current = CreateDirectory("chain-real");
-        for (var i = 0; i <= Domain.Common.Helpers.LinkResolver.MaxLinkHops; i++)
+        for (var i = 0; i <= Application.Common.Helpers.LinkResolver.MaxLinkHops; i++)
         {
             var link = Path.Combine(_root, $"hop-{i}");
             SandboxLinkFactory.CreateDirectoryLink(link, current);
@@ -198,6 +198,35 @@ public sealed class FileSystemDiscoveryOverlapStartupValidatorTests : IDisposabl
 
         await NewSut([CreateDirectory("somewhere-else")], () => ["\0not-a-valid-path", agents])
             .Invoking(s => s.StartAsync(CancellationToken.None)).Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task StartAsync_AWholeVolumeGrant_Throws()
+    {
+        // The broadest overlap there is: the file-system tool may write anywhere on the volume. A volume
+        // root trims to a string ("C:" or "") that Path.GetFullPath cannot read back, so re-normalizing it
+        // compared the roots against the wrong directory (or threw) and let exactly this grant through.
+        var volume = Path.GetPathRoot(_root)!;
+        var agents = CreateDirectory("agents");
+
+        var sut = NewSut([volume], () => [agents]);
+
+        var ex = await sut.Invoking(s => s.StartAsync(CancellationToken.None))
+            .Should().ThrowAsync<InvalidOperationException>();
+        ex.Which.Message.Should().Contain("overlaps", "the refusal must be the overlap message, not a stray parse error");
+    }
+
+    [Fact]
+    public async Task StartAsync_AnUnparseableAllowedBasePath_Refuses_RatherThanSkipping()
+    {
+        // Tolerating a bad content root is right (the registries skip it). Tolerating a bad ALLOWED path is a
+        // hole: the file-system tool may still reach it, so leaving it out of the check leaves a writable
+        // location unexamined.
+        var agents = CreateDirectory("agents");
+
+        var sut = NewSut(["\0not-a-valid-path"], () => [agents]);
+
+        await sut.Invoking(s => s.StartAsync(CancellationToken.None)).Should().ThrowAsync<InvalidOperationException>();
     }
 
     [Fact]

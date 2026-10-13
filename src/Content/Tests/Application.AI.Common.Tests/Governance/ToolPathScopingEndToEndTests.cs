@@ -249,6 +249,56 @@ public sealed class ToolPathScopingEndToEndTests
     }
 
     [Fact]
+    public async Task AgentTurnPath_ScopedProfile_ParametersJsonElementIsADoubleEncodedString_IsDecodedAndDenied()
+    {
+        // A JsonElement is handed to FromJson by governance and by the tool alike, so a double-encoded string
+        // element is decoded on both sides and the denied path is seen — no need to refuse it as unknown.
+        var (_, fileSystem, toolProvider) = BuildToolFixture();
+        var context = Mock.Of<IAgentExecutionContext>(c => c.AgentId == "test-agent");
+        var (governor, trace) = BuildGovernor(toolProvider, DenyingSandboxConfig(), context);
+
+        var builder = new ToolChainBuilder(
+            NullLogger<ToolChainBuilder>.Instance, toolProvider, new AIToolConverter(NullLogger<AIToolConverter>.Instance));
+        var aiFunction = (AIFunction)builder.BuildToolsByName(["file_system"], "test-agent").Single();
+
+        using var _ = ToolAdmissionAccessor.Begin(AdmissionHarness.Pipeline(governor: governor, executionContext: context));
+
+        var args = new AIFunctionArguments
+        {
+            ["operation"] = "read",
+            ["parametersJson"] = JsonSerializer.SerializeToElement(JsonSerializer.Serialize(new { path = DeniedPath }))
+        };
+
+        await aiFunction.InvokeAsync(args);
+
+        trace.Snapshot().ToolDecisions.Should().ContainSingle(d => d.Reason.Contains("path denied"));
+        fileSystem.Verify(fs => fs.ReadFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AgentTurnPath_ScopedProfile_BlankParametersJsonString_IsNoParameters_NotUnknown()
+    {
+        // A blank string is "no parameters" (ToolParameters.FromJson says so); it must not be refused as an
+        // unreadable shape. The tool itself still fails for the missing path, so nothing is read.
+        var (_, fileSystem, toolProvider) = BuildToolFixture();
+        var context = Mock.Of<IAgentExecutionContext>(c => c.AgentId == "test-agent");
+        var (governor, trace) = BuildGovernor(toolProvider, DenyingSandboxConfig(), context);
+
+        var builder = new ToolChainBuilder(
+            NullLogger<ToolChainBuilder>.Instance, toolProvider, new AIToolConverter(NullLogger<AIToolConverter>.Instance));
+        var aiFunction = (AIFunction)builder.BuildToolsByName(["file_system"], "test-agent").Single();
+
+        using var _ = ToolAdmissionAccessor.Begin(AdmissionHarness.Pipeline(governor: governor, executionContext: context));
+
+        var args = new AIFunctionArguments { ["operation"] = "read", ["parametersJson"] = "  " };
+
+        await aiFunction.InvokeAsync(args);
+
+        trace.Snapshot().ToolDecisions.Should().NotContain(d => d.Reason.Contains("could be determined"));
+        fileSystem.Verify(fs => fs.ReadFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task AgentTurnPath_UnscopedProfile_ParametersJsonArrivesAsAJsonNode_StillRuns()
     {
         // Control for the test above: refusing an unreadable shape is only correct when scoping is

@@ -1,3 +1,4 @@
+using Application.Common.Helpers;
 using Domain.Common.Helpers;
 using Infrastructure.AI.Skills;
 using Microsoft.Extensions.Hosting;
@@ -91,8 +92,11 @@ public sealed class FileSystemDiscoveryOverlapStartupValidator : IHostedService
     /// </exception>
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        var bases = ResolveAll(_allowedBasePaths, "allowed base path");
-        var roots = ResolveAll(_rootPaths(), "skill/agent root");
+        // Tolerance differs by side. A content root the runtime cannot parse is skipped, as the registries
+        // skip it. An allowed base path it cannot parse is NOT: the file-system tool may still reach it, so
+        // omitting it would leave a writable location outside the check. That is a refusal.
+        var bases = ResolveAll(_allowedBasePaths, "allowed base path", skipUnparseable: false);
+        var roots = ResolveAll(_rootPaths(), "skill/agent root", skipUnparseable: true);
 
         var overlaps = (from allowed in bases
                         from root in roots
@@ -125,7 +129,7 @@ public sealed class FileSystemDiscoveryOverlapStartupValidator : IHostedService
     /// Resolves each configured path to the directory it really names, skipping (with a warning) an entry the
     /// runtime cannot parse, and refusing an entry whose links cannot be fully followed.
     /// </summary>
-    private List<string> ResolveAll(IEnumerable<string> paths, string kind)
+    private List<string> ResolveAll(IEnumerable<string> paths, string kind, bool skipUnparseable)
     {
         var resolved = new List<string>();
 
@@ -141,6 +145,13 @@ public sealed class FileSystemDiscoveryOverlapStartupValidator : IHostedService
             }
             catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
             {
+                if (!skipUnparseable)
+                {
+                    throw new InvalidOperationException(
+                        $"The {kind} '{path}' cannot be parsed as a path, so it cannot be shown not to overlap the " +
+                        "skill/agent content roots.", ex);
+                }
+
                 // The registries skip a path they cannot resolve; so does this, rather than turning a
                 // tolerated bad entry into a failed boot with an unrelated stack trace.
                 _logger.LogWarning(ex, "Skipping unresolvable {Kind} '{Path}' in the discovery-overlap check", kind, path);
@@ -158,7 +169,11 @@ public sealed class FileSystemDiscoveryOverlapStartupValidator : IHostedService
                     "roots. Point the setting at a directory without a long or cyclic link chain.");
             }
 
-            resolved.Add(PathScope.Normalize(real));
+            // Trimmed, not re-normalized: PathScope.Normalize is Path.GetFullPath plus a trim, and a volume root
+            // trims to something GetFullPath cannot read back ("C:\" -> "C:" is then read as the current
+            // directory on drive C, "/" -> "" throws). The input is already absolute, so only the trim is
+            // needed, and a whole-drive grant — the broadest overlap there is — must keep naming the drive.
+            resolved.Add(real.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         }
 
         return [.. resolved.Distinct(PathScope.Comparer)];

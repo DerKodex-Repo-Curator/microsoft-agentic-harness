@@ -1,4 +1,4 @@
-namespace Domain.Common.Helpers;
+namespace Application.Common.Helpers;
 
 /// <summary>
 /// Resolves a path to the location the operating system would actually open, following symbolic links

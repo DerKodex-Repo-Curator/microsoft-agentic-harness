@@ -1,5 +1,5 @@
+using Application.Common.Helpers;
 using Domain.Common.Config;
-using Domain.Common.Helpers;
 using Microsoft.Extensions.Options;
 
 namespace Application.Core.CQRS.Evaluation.RunEvalSuite;
