@@ -1,4 +1,5 @@
 using Application.AI.Common.Interfaces.Governance;
+using Application.AI.Common.Interfaces.Skills;
 using Application.Common.Helpers;
 using Domain.AI.Agents;
 using Domain.Common.Config.AI;
@@ -20,36 +21,52 @@ namespace Infrastructure.AI.Agents;
 public sealed class AgentMetadataParser
 {
     private readonly ILogger<AgentMetadataParser> _logger;
+    private readonly ISkillFileReader _fileReader;
     private readonly IMcpSecurityScanner _scanner;
     private readonly IOptionsMonitor<AIConfig> _config;
 
     /// <summary>
-    /// Initialises the parser with a logger for malformed-frontmatter diagnostics, and a scanner
-    /// that screens the manifest for prompt-injection payloads before it is trusted (issue #331).
+    /// Initialises the parser with a logger for malformed-frontmatter diagnostics, the sandboxed reader
+    /// every manifest is read through (#822), and a scanner that screens the manifest for
+    /// prompt-injection payloads before it is trusted (issue #331).
     /// </summary>
     public AgentMetadataParser(
         ILogger<AgentMetadataParser> logger,
+        ISkillFileReader fileReader,
         IMcpSecurityScanner scanner,
         IOptionsMonitor<AIConfig> config)
     {
         ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(fileReader);
         ArgumentNullException.ThrowIfNull(scanner);
         ArgumentNullException.ThrowIfNull(config);
 
         _logger = logger;
+        _fileReader = fileReader;
         _scanner = scanner;
         _config = config;
     }
 
     /// <summary>
-    /// Reads and parses an <c>AGENT.md</c> file from disk.
+    /// Reads and parses an <c>AGENT.md</c> file through the sandboxed <see cref="ISkillFileReader"/>.
     /// </summary>
+    /// <remarks>
+    /// The read goes through the reader, as <see cref="Infrastructure.AI.Skills.SkillMetadataParser"/>'s
+    /// does, so a manifest is confined to the configured skill content roots and bounded by the reader's
+    /// size cap. A raw <c>File.ReadAllText</c> would follow a link planted at the file and read it whole.
+    /// This also applies to a bundle's staged <c>AGENT.md</c> (<c>BundleStagingService</c>): one over the
+    /// reader's 10 MB cap now fails staging, where it was previously read in full, and the bundle is
+    /// cleaned up by that service's existing catch-all.
+    /// </remarks>
     /// <param name="agentFilePath">Absolute path to the <c>AGENT.md</c> file.</param>
     /// <param name="baseDirectory">Directory containing the <c>AGENT.md</c>; used as the <see cref="AgentDefinition.BaseDirectory"/>.</param>
     /// <returns>An <see cref="AgentDefinition"/> populated from the frontmatter.</returns>
+    /// <exception cref="Application.AI.Common.Exceptions.SkillPathRefusedException">
+    /// The path is outside the configured skill content roots.
+    /// </exception>
     public AgentDefinition ParseFromFile(string agentFilePath, string baseDirectory)
     {
-        var raw = File.ReadAllText(agentFilePath);
+        var raw = _fileReader.ReadText(agentFilePath);
         var (yaml, body) = YamlFrontmatterHelper.ExtractFrontmatter(raw);
 
         if (string.IsNullOrWhiteSpace(yaml))

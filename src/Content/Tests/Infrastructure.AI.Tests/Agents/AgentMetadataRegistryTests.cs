@@ -46,7 +46,7 @@ public sealed class AgentMetadataRegistryTests
             NullLogger<AgentMetadataRegistry>.Instance,
             new OptionsMonitorStub(appConfig),
             new AgentMetadataParser(
-                NullLogger<AgentMetadataParser>.Instance, TestMcpSecurityScanner.AlwaysSafe(), TestMcpSecurityScanner.DefaultConfig()),
+                NullLogger<AgentMetadataParser>.Instance, skillFileReader, TestMcpSecurityScanner.AlwaysSafe(), TestMcpSecurityScanner.DefaultConfig()),
             new SkillMetadataParser(
                 NullLogger<SkillMetadataParser>.Instance, skillFileReader,
                 TestMcpSecurityScanner.AlwaysSafe(), TestMcpSecurityScanner.DefaultConfig(),

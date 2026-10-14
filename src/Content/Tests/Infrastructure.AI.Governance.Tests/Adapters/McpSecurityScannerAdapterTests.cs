@@ -230,7 +230,7 @@ public sealed class McpSecurityScannerAdapterTests
             if (Path.GetFileName(manifestPath).Equals("AGENT.md", StringComparison.OrdinalIgnoreCase))
             {
                 var agentParser = new AgentMetadataParser(
-                    NullLogger<AgentMetadataParser>.Instance, _scanner, config);
+                    NullLogger<AgentMetadataParser>.Instance, new UnsandboxedSkillFileReader(), _scanner, config);
                 agentParser.ParseFromFile(manifestPath, baseDirectory);
             }
             else

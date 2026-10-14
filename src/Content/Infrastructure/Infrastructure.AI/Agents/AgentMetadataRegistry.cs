@@ -1,3 +1,4 @@
+using Application.AI.Common.Exceptions;
 using Application.AI.Common.Interfaces;
 using Application.AI.Common.Interfaces.Skills;
 using Domain.AI.Agents;
@@ -21,6 +22,18 @@ namespace Infrastructure.AI.Agents;
 /// Also implements <see cref="IAgentRegistryRefresher"/> (issue #705): the cache can be invalidated
 /// or eagerly rebuilt after the initial load, by <c>AgentManifestWatcherService</c>
 /// reacting to filesystem changes or by an operator-triggered refresh command.
+/// <para>
+/// <b>The walk and the manifest read are sandboxed (#822).</b> The probe, the directory walk and the read all
+/// go through <see cref="ISkillFileReader"/>, so a link planted in a root cannot lead discovery to an
+/// <c>AGENT.md</c> elsewhere on disk, and a manifest is size-capped. An agent reachable only through a link
+/// leaving the roots is therefore not discovered; configure the target as an additional path.
+/// </para>
+/// <para>
+/// <b>A refusal is contained to the one agent</b> (an <c>AGENT.md</c>, or an agent's own <c>skills/</c>
+/// directory, that resolves outside the roots): that agent is not registered and the refusal is logged at
+/// error level. This deliberately differs from <c>SkillMetadataRegistry</c>, where it propagates and ends
+/// discovery for the host; one planted link must not do that to every agent.
+/// </para>
 /// </remarks>
 public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegistryRefresher
 {
@@ -189,7 +202,7 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
     {
         var previous = _cache ?? new Dictionary<string, AgentDefinition>(StringComparer.OrdinalIgnoreCase);
         var previousSearchedPaths = _searchedPaths;
-        var (next, hadEnumerationErrors) = Discover();
+        var (next, hadEnumerationErrors, refusedDirectories) = Discover();
 
         var added = new List<string>();
         var updated = new List<string>();
@@ -229,7 +242,14 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
             p => !_searchedPaths.Contains(p, StringComparer.OrdinalIgnoreCase));
         var scanIsUnreliable = hadEnumerationErrors || rootsVanished;
 
-        if (scanIsUnreliable && removed.Count > 0)
+        // Carry forward only what is merely unseen. An agent whose directory the sandbox refuses THIS pass is
+        // gone for a known reason; keeping its old definition because an unrelated directory failed to
+        // enumerate would leave a path that now escapes the sandbox live.
+        var carried = scanIsUnreliable
+            ? removed.Where(id => !refusedDirectories.Contains(previous[id].BaseDirectory)).ToList()
+            : [];
+
+        if (carried.Count > 0)
         {
             _logger.LogWarning(
                 "Agent registry rebuild scan was unreliable ({Reason}) and would have classified " +
@@ -237,18 +257,15 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
                 "be incomplete rather than those agents actually being gone",
                 hadEnumerationErrors && rootsVanished ? "enumeration errors and a vanished root"
                     : hadEnumerationErrors ? "enumeration errors" : "a vanished root",
-                removed.Count);
+                carried.Count);
 
-            foreach (var id in removed)
+            foreach (var id in carried)
                 next[id] = previous[id];
+        }
 
-            removed = [];
-        }
-        else
-        {
-            foreach (var id in removed)
-                _ownedSkills.RemoveAgent(id);
-        }
+        removed = [.. removed.Except(carried)];
+        foreach (var id in removed)
+            _ownedSkills.RemoveAgent(id);
 
         _cache = next;
         _stale = false;
@@ -298,28 +315,30 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
     /// failed to see it this pass" (issue #705 code review) — a distinction the result dictionary
     /// alone cannot make.
     /// </summary>
-    private (Dictionary<string, AgentDefinition> Agents, bool HadEnumerationErrors) Discover()
+    private (Dictionary<string, AgentDefinition> Agents, bool HadEnumerationErrors, HashSet<string> RefusedDirectories) Discover()
     {
         var resolvedPaths = AgentSearchPathResolver.Resolve(_appConfig.CurrentValue.AI?.Agents, _logger);
         _searchedPaths = resolvedPaths;
 
         var result = new Dictionary<string, AgentDefinition>(StringComparer.OrdinalIgnoreCase);
         var hadEnumerationErrors = false;
+        var refusedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var rootPath in resolvedPaths)
-            DiscoverInDirectory(rootPath, depth: 0, result, ref hadEnumerationErrors);
+            DiscoverInDirectory(rootPath, depth: 0, result, refusedDirectories, ref hadEnumerationErrors);
 
         _logger.LogInformation(
             "Agent discovery complete: {Count} agents found across {PathCount} path(s)",
             result.Count, resolvedPaths.Count);
 
-        return (result, hadEnumerationErrors);
+        return (result, hadEnumerationErrors, refusedDirectories);
     }
 
     private void DiscoverInDirectory(
         string directory,
         int depth,
         Dictionary<string, AgentDefinition> result,
+        HashSet<string> refusedDirectories,
         ref bool hadEnumerationErrors)
     {
         if (depth > MaxSearchDepth)
@@ -327,7 +346,39 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
 
         var agentFile = Path.Combine(directory, "AGENT.md");
 
-        if (File.Exists(agentFile))
+        bool hasManifest;
+        try
+        {
+            hasManifest = _skillFileReader.FileExists(agentFile);
+        }
+        catch (ArgumentException ex)
+        {
+            // The sandbox rejects a path with traversal sequences or shell metacharacters ("R;D", "v1..2"):
+            // one unusable directory, not a reason to end discovery elsewhere. Deliberately NOT an
+            // enumeration error: the rejection is deterministic, and flagging it would leave every later
+            // scan "unreliable" and stop deletions elsewhere from ever being reconciled.
+            if (depth == 0)
+            {
+                // A configured ROOT rejected this way (an administrative share like "c$") used to be
+                // discovered and now yields nothing, so it is an error rather than a warning.
+                _logger.LogError(ex,
+                    "Agent root {Path} contains characters the skill sandbox rejects, so no agents are loaded from it",
+                    directory);
+            }
+            else
+            {
+                _logger.LogWarning(ex, "Skipping agent directory the sandbox cannot validate: {Path}", directory);
+            }
+
+            return;
+        }
+        catch (SkillPathRefusedException ex)
+        {
+            RecordRefusal(ex, directory, agentFile, refusedDirectories);
+            return;
+        }
+
+        if (hasManifest)
         {
             try
             {
@@ -345,11 +396,19 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
                     }
                     else
                     {
+                        // Sync BEFORE registering: an agent whose own skills cannot be loaded is absent, not
+                        // half-loaded (it would be rebuilt from a same-id GLOBAL skill instead).
+                        SyncAgentOwnedSkills(directory, definition.Id);
                         result[definition.Id] = definition;
                         _logger.LogDebug("Discovered agent: {AgentId} from {Path}", definition.Id, directory);
-                        SyncAgentOwnedSkills(directory, definition.Id);
                     }
                 }
+            }
+            catch (SkillPathRefusedException ex)
+            {
+                // The manifest, or the agent's own skills/ directory, resolves outside the skill content
+                // roots. Contained to this agent so one planted link cannot take the registry down.
+                RecordRefusal(ex, directory, agentFile, refusedDirectories);
             }
             catch (Exception ex)
             {
@@ -362,14 +421,35 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
 
         try
         {
-            foreach (var subDir in Directory.EnumerateDirectories(directory))
-                DiscoverInDirectory(subDir, depth + 1, result, ref hadEnumerationErrors);
+            // Through the reader, which re-validates every subdirectory it returns: a junction planted
+            // inside a root enumerates with a legitimate-looking literal path, and walking into it would
+            // register whatever AGENT.md it points at. An agent reached only through a link that leaves
+            // the roots is therefore not discovered; configure the link's target as an additional path.
+            foreach (var subDir in _skillFileReader.EnumerateDirectories(directory))
+                DiscoverInDirectory(subDir, depth + 1, result, refusedDirectories, ref hadEnumerationErrors);
+        }
+        catch (Exception ex) when (ex is ArgumentException or SkillPathRefusedException)
+        {
+            // Deterministic, like the probe: unlike the generic failure below, not a transient error.
+            _logger.LogWarning(ex, "Skipping agent directory the sandbox refuses to enumerate: {Path}", directory);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Could not enumerate directory: {Path}", directory);
             hadEnumerationErrors = true;
         }
+    }
+
+    /// <summary>
+    /// Records that the skill sandbox refused a path found during discovery, at error level: a path resolving
+    /// outside the content roots is a boundary violation to investigate, not an ordinary malformed entry.
+    /// The directory is remembered so a reconcile never carries an agent from it forward.
+    /// </summary>
+    private void RecordRefusal(
+        SkillPathRefusedException ex, string directory, string path, HashSet<string> refusedDirectories)
+    {
+        refusedDirectories.Add(directory);
+        _logger.LogError(ex, "Agent discovery refused a path outside the skill content roots: {Path}", path);
     }
 
     /// <summary>
