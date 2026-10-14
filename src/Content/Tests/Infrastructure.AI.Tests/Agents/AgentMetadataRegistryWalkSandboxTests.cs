@@ -100,21 +100,52 @@ public sealed class AgentMetadataRegistryWalkSandboxTests : IDisposable
     }
 
     [Fact]
-    public void GetAll_SandboxRefusalOnAWarmCache_IsLoudRatherThanServedFromTheStaleSnapshot()
+    public void GetAll_OneAgentManifestRefused_DoesNotTakeDownTheOtherAgents()
     {
         var root = Directory.CreateDirectory(Path.Combine(_temp, "agents")).FullName;
         WriteManifest(root, "good", "good");
-        RefusableReader? reader = null;
-        var registry = CreateRegistry(new AgentsConfig { BasePath = root }, real => reader = new RefusableReader(real));
-        registry.GetAll().Should().ContainSingle("control: the cache is warm and holds the agent");
-
-        reader!.Refuse = true;
-        registry.Invalidate();
+        WriteManifest(root, "bad", "bad");
+        var registry = CreateRegistry(
+            new AgentsConfig { BasePath = root }, real => new RefusableReader(real) { RefuseProbesUnder = "bad" });
 
         var act = () => registry.GetAll();
 
-        act.Should().Throw<SkillPathRefusedException>(
-            "a boundary violation must not be absorbed by the serve-stale-on-failure tolerance");
+        act.Should().NotThrow("one refused path must not become a registry-wide outage");
+        registry.GetAll().Select(a => a.Id).Should().BeEquivalentTo(["good"]);
+    }
+
+    [SkippableFact]
+    public void GetAll_AgentWhoseOwnSkillsDirectoryLeavesTheRoots_IsNotRegistered()
+    {
+        var root = Directory.CreateDirectory(Path.Combine(_temp, "agents")).FullName;
+        var outside = Directory.CreateDirectory(Path.Combine(_temp, "elsewhere", "skills")).FullName;
+        WriteManifest(root, "good", "good");
+        WriteManifest(root, "alpha", "alpha");
+        SandboxLinkFactory.CreateDirectoryLink(Path.Combine(root, "alpha", "skills"), outside);
+
+        var registry = CreateRegistry(new AgentsConfig { BasePath = root });
+
+        // An agent that lost its own skills would be rebuilt from a same-id GLOBAL skill, so it is absent,
+        // not registered half-loaded; the unrelated agent is unaffected.
+        registry.GetAll().Select(a => a.Id).Should().BeEquivalentTo(["good"]);
+    }
+
+    [Fact]
+    public void Refresh_DirectoryRejectedByInputValidation_DoesNotStopDeletionsBeingReconciled()
+    {
+        var root = Directory.CreateDirectory(Path.Combine(_temp, "agents")).FullName;
+        WriteManifest(root, "stays", "stays");
+        WriteManifest(root, "goes", "goes");
+        Directory.CreateDirectory(Path.Combine(root, "R;D"));
+        var registry = CreateRegistry(new AgentsConfig { BasePath = root });
+        registry.GetAll().Select(a => a.Id).Should().BeEquivalentTo(["stays", "goes"]);
+
+        Directory.Delete(Path.Combine(root, "goes"), recursive: true);
+        var summary = registry.Refresh();
+
+        // The rejection is deterministic, so it says nothing about whether the scan was complete. Treating
+        // it as an enumeration error would keep a really-deleted agent registered forever.
+        summary.Removed.Should().BeEquivalentTo(["goes"]);
     }
 
     private AgentMetadataRegistry CreateRegistry(
@@ -152,17 +183,18 @@ public sealed class AgentMetadataRegistryWalkSandboxTests : IDisposable
 
     private static string Manifest(string id) => $"---\nid: {id}\nname: {id}\n---\nInstructions for {id}.\n";
 
-    /// <summary>Delegates to the real reader until armed, then reports every manifest probe as a sandbox refusal.</summary>
+    /// <summary>Delegates to the real reader, except that it reports a manifest probe under a chosen path as a sandbox refusal.</summary>
     private sealed class RefusableReader(ISkillFileReader inner) : ISkillFileReader
     {
-        public bool Refuse { get; set; }
+        /// <summary>When set, a manifest probe for any path containing this text is reported as refused.</summary>
+        public string? RefuseProbesUnder { get; set; }
 
         public string ReadText(string path) => inner.ReadText(path);
 
         public Task<string> ReadTextAsync(string path, CancellationToken cancellationToken = default) =>
             inner.ReadTextAsync(path, cancellationToken);
 
-        public bool FileExists(string path) => Refuse
+        public bool FileExists(string path) => RefuseProbesUnder is not null && path.Contains(RefuseProbesUnder, StringComparison.Ordinal)
             ? throw new SkillPathRefusedException("Refused for the test.", new UnauthorizedAccessException())
             : inner.FileExists(path);
 

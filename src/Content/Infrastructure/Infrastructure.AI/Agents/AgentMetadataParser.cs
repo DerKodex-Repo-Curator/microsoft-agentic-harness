@@ -54,6 +54,9 @@ public sealed class AgentMetadataParser
     /// The read goes through the reader, as <see cref="Infrastructure.AI.Skills.SkillMetadataParser"/>'s
     /// does, so a manifest is confined to the configured skill content roots and bounded by the reader's
     /// size cap. A raw <c>File.ReadAllText</c> would follow a link planted at the file and read it whole.
+    /// This also applies to a bundle's staged <c>AGENT.md</c> (<c>BundleStagingService</c>): one over the
+    /// reader's 10 MB cap now fails staging, where it was previously read in full, and the bundle is
+    /// cleaned up by that service's existing catch-all.
     /// </remarks>
     /// <param name="agentFilePath">Absolute path to the <c>AGENT.md</c> file.</param>
     /// <param name="baseDirectory">Directory containing the <c>AGENT.md</c>; used as the <see cref="AgentDefinition.BaseDirectory"/>.</param>
