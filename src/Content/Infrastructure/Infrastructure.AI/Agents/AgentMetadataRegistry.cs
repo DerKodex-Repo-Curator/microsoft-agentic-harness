@@ -208,7 +208,7 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
     {
         var previous = _cache ?? new Dictionary<string, AgentDefinition>(StringComparer.OrdinalIgnoreCase);
         var previousSearchedPaths = _searchedPaths;
-        var (next, hadEnumerationErrors) = Discover();
+        var (next, hadEnumerationErrors, refusedDirectories) = Discover();
 
         var added = new List<string>();
         var updated = new List<string>();
@@ -248,6 +248,17 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
             p => !_searchedPaths.Contains(p, StringComparer.OrdinalIgnoreCase));
         var scanIsUnreliable = hadEnumerationErrors || rootsVanished;
 
+        // An agent whose directory the sandbox refuses THIS pass is gone for a known reason, not merely unseen:
+        // carrying its old definition forward because some unrelated directory failed to enumerate would
+        // keep a path that now escapes the sandbox live.
+        var refusedRemovals = removed
+            .Where(id => refusedDirectories.Contains(previous[id].BaseDirectory))
+            .ToList();
+        foreach (var id in refusedRemovals)
+            _ownedSkills.RemoveAgent(id);
+
+        removed = removed.Except(refusedRemovals).ToList();
+
         if (scanIsUnreliable && removed.Count > 0)
         {
             _logger.LogWarning(
@@ -261,12 +272,14 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
             foreach (var id in removed)
                 next[id] = previous[id];
 
-            removed = [];
+            removed = [.. refusedRemovals];
         }
         else
         {
             foreach (var id in removed)
                 _ownedSkills.RemoveAgent(id);
+
+            removed = [.. removed, .. refusedRemovals];
         }
 
         _cache = next;
@@ -317,28 +330,30 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
     /// failed to see it this pass" (issue #705 code review) — a distinction the result dictionary
     /// alone cannot make.
     /// </summary>
-    private (Dictionary<string, AgentDefinition> Agents, bool HadEnumerationErrors) Discover()
+    private (Dictionary<string, AgentDefinition> Agents, bool HadEnumerationErrors, HashSet<string> RefusedDirectories) Discover()
     {
         var resolvedPaths = AgentSearchPathResolver.Resolve(_appConfig.CurrentValue.AI?.Agents, _logger);
         _searchedPaths = resolvedPaths;
 
         var result = new Dictionary<string, AgentDefinition>(StringComparer.OrdinalIgnoreCase);
         var hadEnumerationErrors = false;
+        var refusedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var rootPath in resolvedPaths)
-            DiscoverInDirectory(rootPath, depth: 0, result, ref hadEnumerationErrors);
+            DiscoverInDirectory(rootPath, depth: 0, result, refusedDirectories, ref hadEnumerationErrors);
 
         _logger.LogInformation(
             "Agent discovery complete: {Count} agents found across {PathCount} path(s)",
             result.Count, resolvedPaths.Count);
 
-        return (result, hadEnumerationErrors);
+        return (result, hadEnumerationErrors, refusedDirectories);
     }
 
     private void DiscoverInDirectory(
         string directory,
         int depth,
         Dictionary<string, AgentDefinition> result,
+        HashSet<string> refusedDirectories,
         ref bool hadEnumerationErrors)
     {
         if (depth > MaxSearchDepth)
@@ -359,11 +374,25 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
             // error: the rejection is deterministic, so nothing under this directory can ever have been
             // registered, and flagging it would leave every later scan "unreliable" and stop deletions
             // elsewhere from ever being reconciled.
-            _logger.LogWarning(ex, "Skipping agent directory the sandbox cannot validate: {Path}", directory);
+            if (depth == 0)
+            {
+                // A configured ROOT the sandbox rejects (a path containing '$', ';' or '..', such as an
+                // administrative share) used to be discovered and now yields no agents at all, so say so
+                // at error level rather than leaving a warning among the noise.
+                _logger.LogError(ex,
+                    "Agent root {Path} contains characters the skill sandbox rejects, so no agents are loaded from it",
+                    directory);
+            }
+            else
+            {
+                _logger.LogWarning(ex, "Skipping agent directory the sandbox cannot validate: {Path}", directory);
+            }
+
             return;
         }
         catch (SkillPathRefusedException ex)
         {
+            refusedDirectories.Add(directory);
             RejectRefusedPath(ex, agentFile);
             return;
         }
@@ -403,6 +432,7 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
                 if (registeredId is not null)
                     result.Remove(registeredId);
 
+                refusedDirectories.Add(directory);
                 RejectRefusedPath(ex, agentFile);
             }
             catch (Exception ex)
@@ -422,7 +452,12 @@ public sealed class AgentMetadataRegistry : IAgentMetadataRegistry, IAgentRegist
             // register whatever AGENT.md it points at. An agent reached only through a link that leaves
             // the roots is therefore not discovered; configure the link's target as an additional path.
             foreach (var subDir in _skillFileReader.EnumerateDirectories(directory))
-                DiscoverInDirectory(subDir, depth + 1, result, ref hadEnumerationErrors);
+                DiscoverInDirectory(subDir, depth + 1, result, refusedDirectories, ref hadEnumerationErrors);
+        }
+        catch (Exception ex) when (ex is ArgumentException or SkillPathRefusedException)
+        {
+            // Deterministic, like the probe above: not a reason to distrust the rest of the scan.
+            _logger.LogWarning(ex, "Skipping agent directory the sandbox refuses to enumerate: {Path}", directory);
         }
         catch (Exception ex)
         {

@@ -148,6 +148,28 @@ public sealed class AgentMetadataRegistryWalkSandboxTests : IDisposable
         summary.Removed.Should().BeEquivalentTo(["goes"]);
     }
 
+    [Fact]
+    public void Refresh_AgentNowRefusedWhileAnUnrelatedDirectoryFailsToEnumerate_IsNotCarriedForward()
+    {
+        var root = Directory.CreateDirectory(Path.Combine(_temp, "agents")).FullName;
+        WriteManifest(root, "good", "good");
+        WriteManifest(root, "bad", "bad");
+        Directory.CreateDirectory(Path.Combine(root, "flaky"));
+        RefusableReader? reader = null;
+        var registry = CreateRegistry(new AgentsConfig { BasePath = root }, real => reader = new RefusableReader(real));
+        registry.GetAll().Select(a => a.Id).Should().BeEquivalentTo(["good", "bad"]);
+
+        // 'bad' now resolves outside the roots, and in the same pass an unrelated directory cannot be listed.
+        // The unreliable scan carries unseen agents forward, but a refused one is not merely unseen.
+        reader!.RefuseProbesUnder = "bad";
+        reader.FailEnumerationUnder = "flaky";
+        var summary = registry.Refresh();
+
+        registry.TryGet("bad").Should().BeNull("a path the sandbox now refuses must not stay live");
+        summary.Removed.Should().Contain("bad");
+        registry.TryGet("good").Should().NotBeNull();
+    }
+
     private AgentMetadataRegistry CreateRegistry(
         AgentsConfig agents, Func<ISkillFileReader, ISkillFileReader>? decorate = null)
     {
@@ -189,6 +211,9 @@ public sealed class AgentMetadataRegistryWalkSandboxTests : IDisposable
         /// <summary>When set, a manifest probe for any path containing this text is reported as refused.</summary>
         public string? RefuseProbesUnder { get; set; }
 
+        /// <summary>When set, listing any directory whose path contains this text fails with an IO error.</summary>
+        public string? FailEnumerationUnder { get; set; }
+
         public string ReadText(string path) => inner.ReadText(path);
 
         public Task<string> ReadTextAsync(string path, CancellationToken cancellationToken = default) =>
@@ -200,7 +225,10 @@ public sealed class AgentMetadataRegistryWalkSandboxTests : IDisposable
 
         public bool DirectoryExists(string path) => inner.DirectoryExists(path);
 
-        public IReadOnlyList<string> EnumerateDirectories(string path) => inner.EnumerateDirectories(path);
+        public IReadOnlyList<string> EnumerateDirectories(string path) =>
+            FailEnumerationUnder is not null && path.Contains(FailEnumerationUnder, StringComparison.Ordinal)
+                ? throw new IOException("Simulated transient enumeration failure")
+                : inner.EnumerateDirectories(path);
     }
 
     private sealed class OptionsMonitorStub(AppConfig value) : IOptionsMonitor<AppConfig>
