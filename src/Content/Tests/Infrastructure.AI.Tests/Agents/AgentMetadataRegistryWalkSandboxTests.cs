@@ -45,9 +45,9 @@ public sealed class AgentMetadataRegistryWalkSandboxTests : IDisposable
     [SkippableFact]
     public void GetAll_LinkInsideRootPointingOutside_DoesNotRegisterTheAgentItLeadsTo()
     {
-        var root = Directory.CreateDirectory(Path.Combine(_temp, "agents")).FullName;
+        var root = MakeRoot();
         var outside = Directory.CreateDirectory(Path.Combine(_temp, "elsewhere", "evil")).FullName;
-        WriteManifest(root, "good", "good");
+        WriteManifest(root, "good");
         File.WriteAllText(Path.Combine(outside, "AGENT.md"), Manifest("evil"));
         SandboxLinkFactory.CreateDirectoryLink(Path.Combine(root, "planted"), outside);
 
@@ -62,8 +62,8 @@ public sealed class AgentMetadataRegistryWalkSandboxTests : IDisposable
     [Fact]
     public void GetAll_ManifestOverTheReadSizeLimit_IsSkippedRatherThanLoaded()
     {
-        var root = Directory.CreateDirectory(Path.Combine(_temp, "agents")).FullName;
-        WriteManifest(root, "good", "good");
+        var root = MakeRoot();
+        WriteManifest(root, "good");
 
         var hugeDir = Directory.CreateDirectory(Path.Combine(root, "huge")).FullName;
         using (var stream = File.Create(Path.Combine(hugeDir, "AGENT.md")))
@@ -84,43 +84,39 @@ public sealed class AgentMetadataRegistryWalkSandboxTests : IDisposable
     [Fact]
     public void GetAll_RootWithShellMetacharacters_DoesNotAbortDiscoveryOfTheOtherRoots()
     {
-        var good = Directory.CreateDirectory(Path.Combine(_temp, "agents")).FullName;
+        var good = MakeRoot();
         // ';' is a shell metacharacter the sandbox's input validation refuses (a lone '&' is not), yet a legal
         // folder name on every platform, so this is a real directory the reader will throw on.
         var odd = Directory.CreateDirectory(Path.Combine(_temp, "R;D", "agents")).FullName;
-        WriteManifest(good, "alpha", "alpha");
-        WriteManifest(odd, "beta", "beta");
+        WriteManifest(good, "alpha");
+        WriteManifest(odd, "beta");
 
         var registry = CreateRegistry(new AgentsConfig { BasePath = good, AdditionalPaths = [odd] });
 
-        var act = () => registry.GetAll();
-
-        act.Should().NotThrow("one root the sandbox's input validation rejects must not end discovery of the rest");
-        registry.GetAll().Select(a => a.Id).Should().Contain("alpha");
+        registry.GetAll().Select(a => a.Id).Should().Contain(
+            "alpha", "one root the sandbox's input validation rejects must not end discovery of the rest");
     }
 
     [Fact]
     public void GetAll_OneAgentManifestRefused_DoesNotTakeDownTheOtherAgents()
     {
-        var root = Directory.CreateDirectory(Path.Combine(_temp, "agents")).FullName;
-        WriteManifest(root, "good", "good");
-        WriteManifest(root, "bad", "bad");
+        var root = MakeRoot();
+        WriteManifest(root, "good");
+        WriteManifest(root, "bad");
         var registry = CreateRegistry(
             new AgentsConfig { BasePath = root }, real => new RefusableReader(real) { RefuseProbesUnder = "bad" });
 
-        var act = () => registry.GetAll();
-
-        act.Should().NotThrow("one refused path must not become a registry-wide outage");
-        registry.GetAll().Select(a => a.Id).Should().BeEquivalentTo(["good"]);
+        registry.GetAll().Select(a => a.Id).Should().BeEquivalentTo(
+            ["good"], "one refused path must not become a registry-wide outage");
     }
 
     [SkippableFact]
     public void GetAll_AgentWhoseOwnSkillsDirectoryLeavesTheRoots_IsNotRegistered()
     {
-        var root = Directory.CreateDirectory(Path.Combine(_temp, "agents")).FullName;
+        var root = MakeRoot();
         var outside = Directory.CreateDirectory(Path.Combine(_temp, "elsewhere", "skills")).FullName;
-        WriteManifest(root, "good", "good");
-        WriteManifest(root, "alpha", "alpha");
+        WriteManifest(root, "good");
+        WriteManifest(root, "alpha");
         SandboxLinkFactory.CreateDirectoryLink(Path.Combine(root, "alpha", "skills"), outside);
 
         var registry = CreateRegistry(new AgentsConfig { BasePath = root });
@@ -133,9 +129,9 @@ public sealed class AgentMetadataRegistryWalkSandboxTests : IDisposable
     [Fact]
     public void Refresh_DirectoryRejectedByInputValidation_DoesNotStopDeletionsBeingReconciled()
     {
-        var root = Directory.CreateDirectory(Path.Combine(_temp, "agents")).FullName;
-        WriteManifest(root, "stays", "stays");
-        WriteManifest(root, "goes", "goes");
+        var root = MakeRoot();
+        WriteManifest(root, "stays");
+        WriteManifest(root, "goes");
         Directory.CreateDirectory(Path.Combine(root, "R;D"));
         var registry = CreateRegistry(new AgentsConfig { BasePath = root });
         registry.GetAll().Select(a => a.Id).Should().BeEquivalentTo(["stays", "goes"]);
@@ -151,9 +147,9 @@ public sealed class AgentMetadataRegistryWalkSandboxTests : IDisposable
     [Fact]
     public void Refresh_AgentNowRefusedWhileAnUnrelatedDirectoryFailsToEnumerate_IsNotCarriedForward()
     {
-        var root = Directory.CreateDirectory(Path.Combine(_temp, "agents")).FullName;
-        WriteManifest(root, "good", "good");
-        WriteManifest(root, "bad", "bad");
+        var root = MakeRoot();
+        WriteManifest(root, "good");
+        WriteManifest(root, "bad");
         Directory.CreateDirectory(Path.Combine(root, "flaky"));
         RefusableReader? reader = null;
         var registry = CreateRegistry(new AgentsConfig { BasePath = root }, real => reader = new RefusableReader(real));
@@ -197,10 +193,13 @@ public sealed class AgentMetadataRegistryWalkSandboxTests : IDisposable
             new AgentOwnedSkillStore());
     }
 
-    private static void WriteManifest(string root, string folder, string id)
+    private string MakeRoot() => Directory.CreateDirectory(Path.Combine(_temp, "agents")).FullName;
+
+    /// <summary>Writes an agent whose folder name and id are both <paramref name="name"/>.</summary>
+    private static void WriteManifest(string root, string name)
     {
-        var dir = Directory.CreateDirectory(Path.Combine(root, folder)).FullName;
-        File.WriteAllText(Path.Combine(dir, "AGENT.md"), Manifest(id));
+        var dir = Directory.CreateDirectory(Path.Combine(root, name)).FullName;
+        File.WriteAllText(Path.Combine(dir, "AGENT.md"), Manifest(name));
     }
 
     private static string Manifest(string id) => $"---\nid: {id}\nname: {id}\n---\nInstructions for {id}.\n";
